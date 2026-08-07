@@ -89,11 +89,10 @@ class Stage1Retriever:
                 new_k = k
                 # Strip common prefixes from DataParallel / Peft / Base_model checkpoints
                 for prefix in [
-                    'module.base_model.bert.', 'base_model.bert.',
                     'module.base_model.', 'base_model.',
                     'module.paper_encoder.', 'paper_encoder.',
                     'module.paper_branch.', 'paper_branch.',
-                    'module.', 'model.', 'encoder.'
+                    'module.', 'model.'
                 ]:
                     if new_k.startswith(prefix):
                         new_k = new_k[len(prefix):]
@@ -102,8 +101,8 @@ class Stage1Retriever:
                     cleaned_state[new_k] = v
                 elif f"encoder.{new_k}" in model_keys:
                     cleaned_state[f"encoder.{new_k}"] = v
-                elif f"encoder.bert.{new_k}" in model_keys:
-                    cleaned_state[f"encoder.bert.{new_k}"] = v
+                elif new_k.startswith("bert.") and f"encoder.{new_k[5:]}" in model_keys:
+                    cleaned_state[f"encoder.{new_k[5:]}"] = v
                 elif f"projection.{new_k}" in model_keys:
                     cleaned_state[f"projection.{new_k}"] = v
 
@@ -117,16 +116,6 @@ class Stage1Retriever:
                 print(f"[Stage1Retriever] Warning: 0 keys matched. Sample checkpoint keys: {list(raw_state.keys())[:5]}")
         except Exception as e:
             print(f"[Stage1Retriever] Error loading checkpoint ({checkpoint_path}): {e}")
-        else:
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            print("[Stage1Retriever] Building TF-IDF Fallback Vector Index...")
-            self.vectorizer = TfidfVectorizer(max_features=768)
-            j_texts = [
-                f"{row['title']} {row['aims']} {row['scope']} {' '.join([str(c) for c in row['categories']])}"
-                for idx, row in self.journal_df.iterrows()
-            ]
-            self.journal_embeddings = self.vectorizer.fit_transform(j_texts).toarray()
-            self.journal_ids = self.journal_df['journal_id'].tolist()
 
     def _build_journal_faiss_index(self):
         """Encodes all 1,408 journals into FAISS IndexFlatIP (Cosine similarity)"""
