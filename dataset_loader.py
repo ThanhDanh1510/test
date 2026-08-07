@@ -50,13 +50,26 @@ class MedPRSDatasetLoader:
             except ValueError:
                 label_id = idx
 
-            # Handle Categories
+            # Handle Categories (Flatten any semicolon-separated lists)
             raw_cats = str(row.get('Best Categories', row.get('Categories', '[]')))
+            categories = []
             try:
-                cats_cleaned = raw_cats.replace(';', ',')
-                categories = ast.literal_eval(cats_cleaned) if cats_cleaned.startswith('[') else [cats_cleaned]
+                parts = raw_cats.split(';')
+                for part in parts:
+                    part = part.strip()
+                    if part.startswith('[') and part.endswith(']'):
+                        parsed = ast.literal_eval(part)
+                        if isinstance(parsed, list):
+                            categories.extend([str(x) for x in parsed])
+                        else:
+                            categories.append(str(parsed))
+                    elif part:
+                        categories.append(part.strip("[]'\" "))
             except Exception:
                 categories = [raw_cats]
+            
+            if not categories:
+                categories = ["Medicine"]
 
             # Domain Flags (9 columns)
             domain_cols = [

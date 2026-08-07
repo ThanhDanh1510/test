@@ -45,7 +45,18 @@ class Stage3DeARReranker:
         # --- 3.3 Faithfulness Verification & Output Formulation ---
         results = []
         for rank_idx, candidate in enumerate(top_5_final, 1):
-            cats_str = ', '.join([str(c) for c in candidate['categories'][:2]])
+            cats = candidate.get('categories', [])
+            cats_flat = []
+            if isinstance(cats, list):
+                for c in cats:
+                    if isinstance(c, list):
+                        cats_flat.extend([str(x) for x in c])
+                    else:
+                        cats_flat.append(str(c))
+            else:
+                cats_flat = [str(cats)]
+                
+            cats_str = ', '.join(cats_flat[:2]) if cats_flat else "General Medicine"
             scope_fit_text = f"Strongly aligns with paper's PICO ({paper_object['study_type']}) and journal's categories ({cats_str})."
             why_top1_text = f"Highest domain match score ({candidate['domain_score']}) and Q1 journal scope precision." if rank_idx == 1 else f"Ranked #{rank_idx} due to slightly lower domain specificity."
             

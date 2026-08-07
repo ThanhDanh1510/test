@@ -69,7 +69,19 @@ class Stage1Retriever:
 
         with torch.no_grad():
             for idx, row in self.journal_df.iterrows():
-                j_text = f"Journal: {row['title']}. Aims: {row['aims']}. Scope: {row['scope']}. Categories: {', '.join(row['categories'])}"
+                cats = row['categories']
+                if isinstance(cats, list):
+                    cats_flat = []
+                    for c in cats:
+                        if isinstance(c, list):
+                            cats_flat.extend([str(x) for x in c])
+                        else:
+                            cats_flat.append(str(c))
+                    cats_str = ', '.join(cats_flat)
+                else:
+                    cats_str = str(cats)
+
+                j_text = f"Journal: {row['title']}. Aims: {row['aims']}. Scope: {row['scope']}. Categories: {cats_str}"
                 inputs = self.tokenizer(j_text, max_length=512, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
                 emb = self.model(inputs['input_ids'], inputs['attention_mask']).cpu().numpy()[0]
                 embeddings.append(emb)
