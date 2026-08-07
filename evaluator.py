@@ -26,6 +26,7 @@ def evaluate_pipeline(pipeline, test_papers_df, top_k_list=[1, 3, 5, 10]):
         t0 = time.time()
         
         target_label = int(row['Label'])
+        target_journal_title = pipeline.loader.label_to_journal.get(target_label, {}).get('title', '').lower().strip()
         paper_input = {
             "title": str(row['Title']),
             "abstract": str(row['Abstract']),
