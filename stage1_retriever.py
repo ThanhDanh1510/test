@@ -1,3 +1,4 @@
+import os
 import numpy as np
 try:
     import faiss
@@ -52,8 +53,22 @@ class Stage1Retriever:
             if checkpoint_path and os.path.exists(checkpoint_path):
                 print(f"[Stage1Retriever] Loading fine-tuned SimCPSR checkpoint: {checkpoint_path}")
                 try:
-                    state_dict = torch.load(checkpoint_path, map_location=self.device)
-                    self.model.load_state_dict(state_dict, strict=False)
+                    if os.path.isdir(checkpoint_path):
+                        found_weight = False
+                        for root, dirs, files in os.walk(checkpoint_path):
+                            for f in files:
+                                if f.endswith(".pt") or f.endswith(".bin") or "simcprs" in f.lower() or "epoch" in f.lower():
+                                    w_path = os.path.join(root, f)
+                                    print(f"[Stage1Retriever] Found weights file: {w_path}")
+                                    state_dict = torch.load(w_path, map_location=self.device)
+                                    self.model.load_state_dict(state_dict, strict=False)
+                                    found_weight = True
+                                    break
+                            if found_weight:
+                                break
+                    else:
+                        state_dict = torch.load(checkpoint_path, map_location=self.device)
+                        self.model.load_state_dict(state_dict, strict=False)
                     print("[Stage1Retriever] Successfully loaded fine-tuned SimCPSR weights!")
                 except Exception as e:
                     print(f"[Stage1Retriever] Error loading checkpoint ({checkpoint_path}): {e}")
