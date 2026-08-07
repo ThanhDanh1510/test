@@ -39,17 +39,18 @@ def evaluate_pipeline(pipeline, test_papers_df, top_k_list=[1, 3, 5, 10]):
         latencies.append((t1 - t0) * 1000.0) # Ms
 
         # 1. Stage 1 Recall@50
-        s1_ids = [c['journal_id'] for c in stage1_top50]
-        stage1_recalls_50.append(1.0 if target_label in s1_ids else 0.0)
+        s1_ids = [int(c.get('journal_id', -1)) for c in stage1_top50]
+        s1_titles = [c.get('title', '').lower().strip() for c in stage1_top50]
+        is_in_stage1 = (target_label in s1_ids) or (target_journal_title.lower().strip() in s1_titles)
+        stage1_recalls_50.append(1.0 if is_in_stage1 else 0.0)
 
         # 2. Accuracy@K & NDCG@K
-        predicted_journal_titles = [item['journal_title'].lower() for item in res_output]
-        target_journal_title = pipeline.loader.label_to_journal.get(target_label, {}).get('title', '').lower()
-
-        # Track hit position
         hit_rank = None
         for rank, item in enumerate(res_output, 1):
-            if pipeline.loader.journal_to_label.get(item['journal_title'].lower()) == target_label or item['journal_title'].lower() == target_journal_title:
+            item_title = item.get('journal_title', '').lower().strip()
+            item_id = pipeline.loader.journal_to_label.get(item_title, -1)
+            
+            if item_id == target_label or item_title == target_journal_title.lower().strip():
                 hit_rank = rank
                 break
 

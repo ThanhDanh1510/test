@@ -51,32 +51,61 @@ class Stage1Retriever:
             self.model = BioBERTSimCPSREncoder().to(self.device)
             
             if checkpoint_path and os.path.exists(checkpoint_path):
-                print(f"[Stage1Retriever] Loading fine-tuned SimCPSR checkpoint: {checkpoint_path}")
-                try:
-                    if os.path.isdir(checkpoint_path):
-                        found_weight = False
-                        for root, dirs, files in os.walk(checkpoint_path):
-                            for f in files:
-                                if f.endswith(".pt") or f.endswith(".bin") or "simcprs" in f.lower() or "epoch" in f.lower():
-                                    w_path = os.path.join(root, f)
-                                    print(f"[Stage1Retriever] Found weights file: {w_path}")
-                                    state_dict = torch.load(w_path, map_location=self.device)
-                                    self.model.load_state_dict(state_dict, strict=False)
-                                    found_weight = True
-                                    break
-                            if found_weight:
-                                break
-                    else:
-                        state_dict = torch.load(checkpoint_path, map_location=self.device)
-                        self.model.load_state_dict(state_dict, strict=False)
-                    print("[Stage1Retriever] Successfully loaded fine-tuned SimCPSR weights!")
-                except Exception as e:
-                    print(f"[Stage1Retriever] Error loading checkpoint ({checkpoint_path}): {e}")
+                self._load_simcprs_weights(checkpoint_path)
             else:
                 print(f"[Stage1Retriever] Note: No checkpoint_path passed or found. Using base BioBERT weights.")
 
             self.model.eval()
             self._build_journal_faiss_index()
+
+    def _load_simcprs_weights(self, checkpoint_path):
+        print(f"[Stage1Retriever] Loading fine-tuned SimCPSR checkpoint: {checkpoint_path}")
+        try:
+            # Find weight file inside directory if a directory was passed
+            w_path = checkpoint_path
+            if os.path.isdir(checkpoint_path):
+                for root, dirs, files in os.walk(checkpoint_path):
+                    for f in files:
+                        if f.endswith(".pt") or f.endswith(".bin") or "simcprs" in f.lower() or "epoch" in f.lower():
+                            w_path = os.path.join(root, f)
+                            break
+                    if w_path != checkpoint_path:
+                        break
+
+            print(f"[Stage1Retriever] Loading weights file: {w_path}")
+            raw_state = torch.load(w_path, map_location=self.device)
+            if isinstance(raw_state, dict) and 'state_dict' in raw_state:
+                raw_state = raw_state['state_dict']
+            elif isinstance(raw_state, dict) and 'model' in raw_state:
+                raw_state = raw_state['model']
+
+            model_keys = set(self.model.state_dict().keys())
+            cleaned_state = {}
+
+            for k, v in raw_state.items():
+                new_k = k
+                # Strip common prefixes from DataParallel / Dual-Encoder checkpoints
+                for prefix in ['module.', 'paper_encoder.', 'paper_branch.', 'journal_branch.', 'model.', 'encoder.']:
+                    if new_k.startswith(prefix):
+                        new_k = new_k[len(prefix):]
+
+                if new_k in model_keys:
+                    cleaned_state[new_k] = v
+                elif f"encoder.{new_k}" in model_keys:
+                    cleaned_state[f"encoder.{new_k}"] = v
+                elif f"encoder.bert.{new_k}" in model_keys:
+                    cleaned_state[f"encoder.bert.{new_k}"] = v
+
+            matched_count = len(cleaned_state)
+            print(f"[Stage1Retriever] Key matching report: Matched {matched_count}/{len(model_keys)} layers.")
+            
+            if matched_count > 0:
+                self.model.load_state_dict(cleaned_state, strict=False)
+                print("[Stage1Retriever] Successfully loaded fine-tuned SimCPSR weights into BioBERT!")
+            else:
+                print(f"[Stage1Retriever] Warning: 0 keys matched. Sample checkpoint keys: {list(raw_state.keys())[:5]}")
+        except Exception as e:
+            print(f"[Stage1Retriever] Error loading checkpoint ({checkpoint_path}): {e}")
         else:
             from sklearn.feature_extraction.text import TfidfVectorizer
             print("[Stage1Retriever] Building TF-IDF Fallback Vector Index...")
