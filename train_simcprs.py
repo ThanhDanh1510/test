@@ -46,8 +46,8 @@ class MedPRSTrainDataset(Dataset):
 def train_overnight(
     data_dir="/kaggle/input/medprs-dataset/",
     output_dir="/kaggle/working/",
-    epochs=5,
-    batch_size=64,  # Optimized for 2x T4 GPUs (32 per GPU)
+    epochs=10, # Chuẩn 10 Epochs theo bài báo MedPRS gốc
+    batch_size=64, # Optimized for 2x T4 GPUs (32 per GPU)
     lr=5e-5,
     save_step_frequency=1000, # Save checkpoint every 1000 steps
     use_fp16=True, # Mixed Precision FP16
