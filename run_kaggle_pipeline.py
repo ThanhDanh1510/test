@@ -25,10 +25,31 @@ class DTARSlimPipeline:
         self.loader = MedPRSDatasetLoader(data_dir=data_dir)
         self.journal_df = self.loader.load_journals()
         
+        if not checkpoint_path:
+            checkpoint_path = self._auto_find_checkpoint(data_dir)
+
         self.stage0 = Stage0Parser()
         self.stage1 = Stage1Retriever(self.journal_df, checkpoint_path=checkpoint_path)
         self.stage2 = Stage2HybridGate()
         self.stage3 = Stage3DeARReranker()
+
+    def _auto_find_checkpoint(self, data_dir):
+        """Auto-detects SimCPSR checkpoint folder or file"""
+        search_dirs = [data_dir, "./", "/kaggle/input/"]
+        for s_dir in search_dirs:
+            if s_dir and os.path.exists(s_dir):
+                for root, dirs, files in os.walk(s_dir):
+                    for d in dirs:
+                        if "simcprs" in d.lower() or "epoch" in d.lower():
+                            ckpt = os.path.join(root, d)
+                            print(f"[DTARSlimPipeline] Auto-detected SimCPSR checkpoint folder: {ckpt}")
+                            return ckpt
+                    for f in files:
+                        if f.endswith(".pt") or f.endswith(".bin") or "simcprs" in f.lower():
+                            ckpt = os.path.join(root, f)
+                            print(f"[DTARSlimPipeline] Auto-detected SimCPSR checkpoint file: {ckpt}")
+                            return ckpt
+        return None
 
     def run(self, paper_input, user_strict_mode=False, return_stage1=False):
         """

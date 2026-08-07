@@ -48,6 +48,18 @@ class Stage1Retriever:
             print(f"[Stage1Retriever] Initializing encoder on device: {self.device}")
             self.tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
             self.model = BioBERTSimCPSREncoder().to(self.device)
+            
+            if checkpoint_path and os.path.exists(checkpoint_path):
+                print(f"[Stage1Retriever] Loading fine-tuned SimCPSR checkpoint: {checkpoint_path}")
+                try:
+                    state_dict = torch.load(checkpoint_path, map_location=self.device)
+                    self.model.load_state_dict(state_dict, strict=False)
+                    print("[Stage1Retriever] Successfully loaded fine-tuned SimCPSR weights!")
+                except Exception as e:
+                    print(f"[Stage1Retriever] Error loading checkpoint ({checkpoint_path}): {e}")
+            else:
+                print(f"[Stage1Retriever] Note: No checkpoint_path passed or found. Using base BioBERT weights.")
+
             self.model.eval()
             self._build_journal_faiss_index()
         else:
