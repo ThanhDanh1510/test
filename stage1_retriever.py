@@ -87,8 +87,14 @@ class Stage1Retriever:
 
             for k, v in raw_state.items():
                 new_k = k
-                # Strip common prefixes from DataParallel / Dual-Encoder checkpoints
-                for prefix in ['module.', 'paper_encoder.', 'paper_branch.', 'journal_branch.', 'model.', 'encoder.']:
+                # Strip common prefixes from DataParallel / Peft / Base_model checkpoints
+                for prefix in [
+                    'module.base_model.bert.', 'base_model.bert.',
+                    'module.base_model.', 'base_model.',
+                    'module.paper_encoder.', 'paper_encoder.',
+                    'module.paper_branch.', 'paper_branch.',
+                    'module.', 'model.', 'encoder.'
+                ]:
                     if new_k.startswith(prefix):
                         new_k = new_k[len(prefix):]
 
@@ -98,6 +104,8 @@ class Stage1Retriever:
                     cleaned_state[f"encoder.{new_k}"] = v
                 elif f"encoder.bert.{new_k}" in model_keys:
                     cleaned_state[f"encoder.bert.{new_k}"] = v
+                elif f"projection.{new_k}" in model_keys:
+                    cleaned_state[f"projection.{new_k}"] = v
 
             matched_count = len(cleaned_state)
             print(f"[Stage1Retriever] Key matching report: Matched {matched_count}/{len(model_keys)} layers.")
