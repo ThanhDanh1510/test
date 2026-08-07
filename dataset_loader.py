@@ -25,6 +25,14 @@ class MedPRSDatasetLoader:
         for path in candidates:
             if os.path.exists(path):
                 return path
+                
+        # Recursive fallback search inside /kaggle/input/
+        if os.path.exists("/kaggle/input/"):
+            for root, dirs, files in os.walk("/kaggle/input/"):
+                if filename in files:
+                    found_path = os.path.join(root, filename)
+                    print(f"[DatasetLoader] Located {filename} via recursive search at: {found_path}")
+                    return found_path
         return None
 
     def load_journals(self, journal_csv_name="journal_full_info.csv"):
