@@ -75,27 +75,72 @@ class DTARSlimPipeline:
             return final_recommendations, top_50_candidates
         return final_recommendations
 
-def main():
-    # 1. Initialize Pipeline
-    pipeline = DTARSlimPipeline(data_dir="./")
+def run_master_kaggle_workflow(data_dir="/kaggle/input/medprs-dataset/", output_dir="/kaggle/working/", epochs=10, test_samples=1000):
+    """
+    Master Continuous Kaggle Workflow:
+    1. Runs Overnight Training (BioBERT SimCPSR 10 Epochs, 2x T4 GPU, FP16, Step Checkpoint)
+    2. Auto-loads the newly trained best_simcprs_checkpoint.pth
+    3. Runs Single Query Demo Recommendation
+    4. Runs Batch Evaluation on test_set.csv and prints final report
+    """
+    print("\n=======================================================")
+    print("PHASE 1: RUNNING OVERNIGHT TRAINING (10 EPOCHS)")
+    print("=======================================================\n")
+    
+    from train_simcprs import train_overnight
+    train_overnight(
+        data_dir=data_dir,
+        output_dir=output_dir,
+        epochs=epochs,
+        batch_size=64,
+        lr=5e-5,
+        save_step_frequency=1000,
+        use_fp16=True,
+        resume_training=True
+    )
 
-    # 2. Run Demo Single Query
+    print("\n=======================================================")
+    print("PHASE 2: LOADING NEWLY TRAINED BEST CHECKPOINT FOR EVALUATION")
+    print("=======================================================\n")
+    
+    best_ckpt = os.path.join(output_dir, "best_simcprs_checkpoint.pth")
+    if not os.path.exists(best_ckpt):
+        best_ckpt = os.path.join(output_dir, "latest_step_checkpoint.pth")
+
+    pipeline = DTARSlimPipeline(data_dir=data_dir, checkpoint_path=best_ckpt)
+
+    print("\n=======================================================")
+    print("PHASE 3: RUNNING SINGLE QUERY DEMO RECOMMENDATION")
+    print("=======================================================\n")
+    
     sample_paper = {
-        "title": "A chemo mechanical constitutive model for muscle activation in bat wing skins.",
-        "abstract": "Birds, bats and insects have evolved unique wing structures to achieve a wide range of flight capabilities. Insects have relatively stiff and passive wings...",
-        "keywords": "bat wing skin; chemo mechanical; constitutive modelling; skeletal muscle"
+        "title": "Genetics of migraine: where are we now?",
+        "abstract": "Migraine is a complex brain disorder explained by genetic and environmental factors. Familial hemiplegic migraine is a rare monogenic subtype...",
+        "keywords": "Migraine; Genetics; Genome wide association studies"
     }
 
-    print("\n[Demo] Running Single Query Recommendation...")
     recommendations = pipeline.run(sample_paper)
     print(json.dumps(recommendations[0], indent=2, ensure_ascii=False))
 
-    # 3. Optional Benchmark Run on Test Set
+    print(f"\n=======================================================")
+    print(f"PHASE 4: RUNNING BATCH EVALUATION ON TEST SET ({test_samples} SAMPLES)")
+    print("=======================================================\n")
+
     try:
-        test_df = pipeline.loader.load_papers(split="test", nrows=50)
+        test_df = pipeline.loader.load_papers(split="test", nrows=test_samples)
         evaluate_pipeline(pipeline, test_df)
     except Exception as e:
-        print(f"\n[Note] Skipping test_set evaluation: {e}")
+        print(f"⚠️ Batch evaluation note: {e}")
+
+def main():
+    pipeline = DTARSlimPipeline(data_dir="./")
+    sample_paper = {
+        "title": "A chemo mechanical constitutive model for muscle activation in bat wing skins.",
+        "abstract": "Birds, bats and insects have evolved unique wing structures to achieve a wide range of flight capabilities...",
+        "keywords": "bat wing skin; chemo mechanical; constitutive modelling; skeletal muscle"
+    }
+    recommendations = pipeline.run(sample_paper)
+    print(json.dumps(recommendations[0], indent=2, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()
