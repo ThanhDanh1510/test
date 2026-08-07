@@ -15,24 +15,35 @@ class MedPRSDatasetLoader:
         self.journal_to_label = {}
         
     def find_file(self, filename):
-        """Helper to locate file in current dir or kaggle input dir"""
+        """Helper to locate file in data_dir, kaggle input dir, or recursively anywhere under /kaggle/input/"""
+        # 1. Direct path check with data_dir
+        if self.data_dir:
+            p = os.path.join(self.data_dir, filename)
+            if os.path.exists(p):
+                return p
+                
+        # 2. Fixed candidate paths
         candidates = [
-            os.path.join(self.data_dir, filename),
+            os.path.join(self.data_dir if self.data_dir else "./", filename),
+            os.path.join("./", filename),
             os.path.join("/kaggle/input/medprs-dataset/", filename),
-            os.path.join("/kaggle/input/medprs-dataset/", filename.replace(".csv", "")),
-            os.path.join("./", filename)
+            os.path.join("/kaggle/input/datasets/tintngc/medprs-dataset/", filename),
+            os.path.join("/kaggle/input/datasets/tintngc/medprs-dataset/", filename.replace(".csv", ""))
         ]
         for path in candidates:
-            if os.path.exists(path):
+            if path and os.path.exists(path):
                 return path
                 
-        # Recursive fallback search inside /kaggle/input/
+        # 3. Case-insensitive Recursive fallback search inside /kaggle/input/
         if os.path.exists("/kaggle/input/"):
             for root, dirs, files in os.walk("/kaggle/input/"):
-                if filename in files:
-                    found_path = os.path.join(root, filename)
-                    print(f"[DatasetLoader] Located {filename} via recursive search at: {found_path}")
-                    return found_path
+                for f in files:
+                    if f.lower() == filename.lower() or f.lower() == filename.lower().replace(".csv", ""):
+                        found_path = os.path.join(root, f)
+                        print(f"[DatasetLoader] Located {filename} via recursive search at: {found_path}")
+                        # Auto-update data_dir to directory of located file
+                        self.data_dir = root
+                        return found_path
         return None
 
     def load_journals(self, journal_csv_name="journal_full_info.csv"):
