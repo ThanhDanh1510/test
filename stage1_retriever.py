@@ -74,10 +74,13 @@ class Stage1Retriever:
 
             print(f"[Stage1Retriever] Loading weights file: {w_path}")
             raw_state = torch.load(w_path, map_location=self.device)
-            if isinstance(raw_state, dict) and 'state_dict' in raw_state:
-                raw_state = raw_state['state_dict']
-            elif isinstance(raw_state, dict) and 'model' in raw_state:
-                raw_state = raw_state['model']
+            if isinstance(raw_state, dict):
+                if 'model_state_dict' in raw_state:
+                    raw_state = raw_state['model_state_dict']
+                elif 'state_dict' in raw_state:
+                    raw_state = raw_state['state_dict']
+                elif 'model' in raw_state:
+                    raw_state = raw_state['model']
 
             model_keys = set(self.model.state_dict().keys())
             cleaned_state = {}
