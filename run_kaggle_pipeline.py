@@ -17,7 +17,7 @@ class DTARSlimPipeline:
     Stage 2: Python Hybrid Gate (Integrity Check + SetFit Desk Reject + Soft Domain Match)
     Stage 3: DeAR Reranker (Pointwise -> Listwise + Dynamic Kendall Tau Permutation + Calibrated Faithfulness Check)
     """
-    def __init__(self, data_dir="./", checkpoint_path=None):
+    def __init__(self, data_dir="./", checkpoint_path=None, use_real_qwen=False):
         print("\n=======================================================")
         print("Initializing DTAR-Slim v2.1 Pipeline...")
         print("=======================================================\n")
@@ -31,7 +31,7 @@ class DTARSlimPipeline:
         self.stage0 = Stage0Parser()
         self.stage1 = Stage1Retriever(self.journal_df, checkpoint_path=checkpoint_path)
         self.stage2 = Stage2HybridGate()
-        self.stage3 = Stage3DeARReranker()
+        self.stage3 = Stage3DeARReranker(use_real_qwen=use_real_qwen)
 
     def _auto_find_checkpoint(self, data_dir):
         """Auto-detects SimCPSR checkpoint folder or file (prioritizing Epoch3 / newest checkpoints)"""
