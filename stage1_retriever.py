@@ -85,7 +85,10 @@ class Stage1Retriever:
                             break
 
             print(f"[Stage1Retriever] Loading weights file: {w_path}")
-            raw_state = torch.load(w_path, map_location=self.device)
+            try:
+                raw_state = torch.load(w_path, map_location=self.device, weights_only=False)
+            except TypeError:
+                raw_state = torch.load(w_path, map_location=self.device)
             if isinstance(raw_state, dict):
                 if 'model_state_dict' in raw_state:
                     raw_state = raw_state['model_state_dict']

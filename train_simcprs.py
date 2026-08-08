@@ -122,7 +122,10 @@ def train_overnight(
     if resume_training and os.path.exists(latest_ckpt_path):
         print(f"[Trainer] 🔄 Resuming training from checkpoint: {latest_ckpt_path}")
         try:
-            ckpt = torch.load(latest_ckpt_path, map_location=device)
+            try:
+                ckpt = torch.load(latest_ckpt_path, map_location=device, weights_only=False)
+            except TypeError:
+                ckpt = torch.load(latest_ckpt_path, map_location=device)
             start_epoch = ckpt.get("epoch", 1)
             global_step = ckpt.get("global_step", 0)
             best_val_acc = ckpt.get("best_val_acc", 0.0)
