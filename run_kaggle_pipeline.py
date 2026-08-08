@@ -34,21 +34,33 @@ class DTARSlimPipeline:
         self.stage3 = Stage3DeARReranker()
 
     def _auto_find_checkpoint(self, data_dir):
-        """Auto-detects SimCPSR checkpoint folder or file"""
+        """Auto-detects SimCPSR checkpoint folder or file (prioritizing Epoch3 / newest checkpoints)"""
         search_dirs = [data_dir, "./", "/kaggle/input/"]
+        found_ckpts = []
         for s_dir in search_dirs:
             if s_dir and os.path.exists(s_dir):
                 for root, dirs, files in os.walk(s_dir):
                     for d in dirs:
-                        if "simcprs" in d.lower() or "epoch" in d.lower():
+                        d_lower = d.lower()
+                        if "epoch3" in d_lower or "latest_step" in d_lower or "epoch_03" in d_lower:
                             ckpt = os.path.join(root, d)
-                            print(f"[DTARSlimPipeline] Auto-detected SimCPSR checkpoint folder: {ckpt}")
+                            print(f"[DTARSlimPipeline] Found Epoch3/Latest Checkpoint Folder: {ckpt}")
                             return ckpt
+                        elif "simcprs" in d_lower or "epoch" in d_lower:
+                            found_ckpts.append(os.path.join(root, d))
                     for f in files:
-                        if f.endswith(".pt") or f.endswith(".bin") or "simcprs" in f.lower():
+                        f_lower = f.lower()
+                        if "epoch3" in f_lower or "latest_step" in f_lower:
                             ckpt = os.path.join(root, f)
-                            print(f"[DTARSlimPipeline] Auto-detected SimCPSR checkpoint file: {ckpt}")
+                            print(f"[DTARSlimPipeline] Found Epoch3/Latest Checkpoint File: {ckpt}")
                             return ckpt
+                        elif f.endswith(".pt") or f.endswith(".bin") or f.endswith(".pth") or "simcprs" in f_lower:
+                            found_ckpts.append(os.path.join(root, f))
+
+        if found_ckpts:
+            found_ckpts.sort(key=lambda x: ("epoch3" in x.lower() or "latest" in x.lower() or "epoch_03" in x.lower()), reverse=True)
+            print(f"[DTARSlimPipeline] Auto-detected checkpoint: {found_ckpts[0]}")
+            return found_ckpts[0]
         return None
 
     def run(self, paper_input, user_strict_mode=False, return_stage1=False):

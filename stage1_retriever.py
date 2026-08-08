@@ -61,16 +61,28 @@ class Stage1Retriever:
     def _load_simcprs_weights(self, checkpoint_path):
         print(f"[Stage1Retriever] Loading fine-tuned SimCPSR checkpoint: {checkpoint_path}")
         try:
-            # Find weight file inside directory if a directory was passed
             w_path = checkpoint_path
             if os.path.isdir(checkpoint_path):
-                for root, dirs, files in os.walk(checkpoint_path):
-                    for f in files:
-                        if f.endswith(".pt") or f.endswith(".bin") or "simcprs" in f.lower() or "epoch" in f.lower():
-                            w_path = os.path.join(root, f)
+                # If directory contains PyTorch state files directly
+                if os.path.exists(os.path.join(checkpoint_path, "data.pkl")) or os.path.exists(os.path.join(checkpoint_path, "byteorder")):
+                    w_path = checkpoint_path
+                else:
+                    # Look for subfolders like latest_step_checkpoint or files
+                    for root, dirs, files in os.walk(checkpoint_path):
+                        for d in dirs:
+                            if "latest_step" in d.lower() or "checkpoint" in d.lower() or "epoch" in d.lower():
+                                candidate_dir = os.path.join(root, d)
+                                if os.path.exists(os.path.join(candidate_dir, "data.pkl")) or any(f.endswith(('.pth', '.pt', '.bin')) for f in os.listdir(candidate_dir)):
+                                    w_path = candidate_dir
+                                    break
+                        if w_path != checkpoint_path:
                             break
-                    if w_path != checkpoint_path:
-                        break
+                        for f in files:
+                            if f.endswith(".pth") or f.endswith(".pt") or f.endswith(".bin") or "simcprs" in f.lower() or "epoch" in f.lower():
+                                w_path = os.path.join(root, f)
+                                break
+                        if w_path != checkpoint_path:
+                            break
 
             print(f"[Stage1Retriever] Loading weights file: {w_path}")
             raw_state = torch.load(w_path, map_location=self.device)
