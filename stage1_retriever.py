@@ -17,33 +17,57 @@ except ImportError:
 
 class BioBERTSimCPSREncoder(nn.Module):
     """
-    BioBERT SimCPSR Dual-Branch Projection Architecture (MedPRS Approach C)
-    - BioBERT Encoder (768)
-    - Linear Projection (linear1_1: 768 -> 512)
-    - Cosine Normalization for FAISS Indexing
+    SimCPSRModel (Exact MedPRS Dual-Branch Classifier Architecture from tnt1626/DeAR-Reranking)
+    - Mean pooling across BioBERT token embeddings
+    - linear1_1 (768 -> 512) for Paper Projection
+    - linear2_1 (768 -> 512) for Journal Projection
+    - linear_main_1 (1918 -> 1406) for Joint Similarity Logits
     """
-    def __init__(self, model_name="dmis-lab/biobert-base-cased-v1.1"):
+    def __init__(self, model_name="dmis-lab/biobert-base-cased-v1.1", num_classes=1406):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name)
         self.linear1_1 = nn.Linear(768, 512)
+        self.linear2_1 = nn.Linear(768, 512)
+        self.linear_main_1 = nn.Linear(1918, num_classes)
 
-    def forward(self, input_ids, attention_mask):
+    def mean_pooling(self, outputs, attention_mask):
+        token_embeddings = outputs[0]
+        mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        emb = torch.sum(token_embeddings * mask_expanded, 1) / torch.clamp(mask_expanded.sum(1), min=1e-9)
+        return emb
+
+    def encode_paper(self, input_ids, attention_mask):
         outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-        cls_rep = outputs.last_hidden_state[:, 0, :]
-        p_proj = torch.relu(self.linear1_1(cls_rep))
-        normed = nn.functional.normalize(p_proj, p=2, dim=1)
-        return normed
+        emb = self.mean_pooling(outputs, attention_mask)
+        paper_proj = torch.relu(self.linear1_1(emb))
+        return paper_proj
+
+    def encode_journal(self, input_ids, attention_mask):
+        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+        emb = self.mean_pooling(outputs, attention_mask)
+        journal_proj = torch.relu(self.linear2_1(emb))
+        return journal_proj
+
+    def forward_logits(self, paper_proj, journal_proj_embeddings):
+        paper_proj_norm = paper_proj / torch.clamp(paper_proj.norm(dim=-1, keepdim=True), min=1e-9)
+        journal_proj_norm = journal_proj_embeddings / torch.clamp(journal_proj_embeddings.norm(dim=-1, keepdim=True), min=1e-9)
+        
+        sim_vector = torch.matmul(paper_proj_norm, journal_proj_norm.t())
+        joint = torch.cat([paper_proj, sim_vector], dim=-1)
+        logits = self.linear_main_1(joint)
+        return logits
 
 class Stage1Retriever:
     def __init__(self, journal_df, checkpoint_path=None, device=None):
         self.journal_df = journal_df
-        self.journal_ids = []
+        self.journal_ids = self.journal_df['journal_id'].tolist()
+        num_classes = len(self.journal_df)
         
         if HAS_TORCH:
             self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
             print(f"[Stage1Retriever] Initializing encoder on device: {self.device}")
             self.tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
-            self.model = BioBERTSimCPSREncoder().to(self.device)
+            self.model = BioBERTSimCPSREncoder(num_classes=num_classes).to(self.device)
             
             if checkpoint_path and os.path.exists(checkpoint_path):
                 self._load_simcprs_weights(checkpoint_path)
@@ -51,7 +75,7 @@ class Stage1Retriever:
                 print(f"[Stage1Retriever] Note: No checkpoint_path passed or found. Using base BioBERT weights.")
 
             self.model.eval()
-            self._build_journal_faiss_index()
+            self._precompute_journal_embeddings()
 
     def _load_simcprs_weights(self, checkpoint_path):
         print(f"[Stage1Retriever] Loading fine-tuned SimCPSR checkpoint: {checkpoint_path}")
@@ -133,12 +157,10 @@ class Stage1Retriever:
         except Exception as e:
             print(f"[Stage1Retriever] Error loading checkpoint ({checkpoint_path}): {e}")
 
-    def _build_journal_faiss_index(self):
-        """Encodes all 1,408 journals into FAISS IndexFlatIP (Cosine similarity)"""
-        print("[Stage1Retriever] Pre-computing journal embeddings for FAISS Index...")
-        embeddings = []
-        self.journal_ids = []
-
+    def _precompute_journal_embeddings(self):
+        """Encodes all 1,408 journals into 512-dim journal projected embeddings using linear2_1"""
+        print("[Stage1Retriever] Pre-computing 512-dim journal projected embeddings with linear2_1...")
+        j_embeddings = []
         with torch.no_grad():
             for idx, row in self.journal_df.iterrows():
                 cats = row['categories']
@@ -155,18 +177,11 @@ class Stage1Retriever:
 
                 j_text = f"Journal: {row['title']}. Aims: {row['aims']}. Scope: {row['scope']}. Categories: {cats_str}"
                 inputs = self.tokenizer(j_text, max_length=512, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
-                emb = self.model(inputs['input_ids'], inputs['attention_mask']).cpu().numpy()[0]
-                embeddings.append(emb)
-                self.journal_ids.append(row['journal_id'])
+                j_proj = self.model.encode_journal(inputs['input_ids'], inputs['attention_mask'])
+                j_embeddings.append(j_proj.squeeze(0))
 
-        emb_matrix = np.array(embeddings).astype('float32')
-        self.journal_embeddings = emb_matrix
-        
-        if HAS_FAISS:
-            dim = emb_matrix.shape[1]
-            self.index = faiss.IndexFlatIP(dim)
-            self.index.add(emb_matrix)
-            print(f"[Stage1Retriever] Successfully indexed {self.index.ntotal} journal vectors in FAISS.")
+        self.journal_proj_tensor = torch.stack(j_embeddings).to(self.device)
+        print(f"[Stage1Retriever] Successfully pre-computed {self.journal_proj_tensor.size(0)} journal projected embeddings tensor of shape {self.journal_proj_tensor.shape}.")
 
     def retrieve(self, paper_object, top_k=50):
         p_text = f"Title: {paper_object['title']}. Abstract: {paper_object['abstract']}. Keywords: {paper_object['keywords']}"
@@ -174,15 +189,11 @@ class Stage1Retriever:
         if HAS_TORCH:
             inputs = self.tokenizer(p_text, max_length=512, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
             with torch.no_grad():
-                query_emb = self.model(inputs['input_ids'], inputs['attention_mask']).cpu().numpy().astype('float32')
-            if HAS_FAISS and hasattr(self, 'index') and self.index is not None:
-                scores, indices = self.index.search(query_emb, top_k)
-                top_scores = scores[0]
-                top_indices = indices[0]
-            else:
-                sims = np.dot(self.journal_embeddings, query_emb[0])
-                top_indices = np.argsort(sims)[::-1][:top_k]
-                top_scores = sims[top_indices]
+                paper_proj = self.model.encode_paper(inputs['input_ids'], inputs['attention_mask'])
+                logits = self.model.forward_logits(paper_proj, self.journal_proj_tensor)
+                top_scores, top_indices = torch.topk(logits[0], k=min(top_k, logits.size(1)))
+                top_scores = top_scores.cpu().numpy()
+                top_indices = top_indices.cpu().numpy()
         else:
             query_emb = self.vectorizer.transform([p_text]).toarray()[0]
             sims = np.dot(self.journal_embeddings, query_emb)
@@ -191,8 +202,11 @@ class Stage1Retriever:
         
         results = []
         for rank, (score, idx) in enumerate(zip(top_scores, top_indices)):
-            j_id = self.journal_ids[idx]
-            j_row = self.journal_df[self.journal_df['journal_id'] == j_id].iloc[0].to_dict()
+            if idx < len(self.journal_ids):
+                j_id = self.journal_ids[idx]
+                j_row = self.journal_df[self.journal_df['journal_id'] == j_id].iloc[0].to_dict()
+            else:
+                j_row = self.journal_df.iloc[idx % len(self.journal_df)].to_dict()
             j_row['dense_similarity_score'] = float(score)
             results.append(j_row)
 
