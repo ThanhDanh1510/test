@@ -58,6 +58,11 @@ class MedPRSDatasetLoader:
 
         print(f"[DatasetLoader] Loading journal metadata from: {file_path}")
         df = pd.read_csv(file_path)
+        if 'Label' in df.columns:
+            df['Label'] = pd.to_numeric(df['Label'], errors='coerce')
+            df = df.dropna(subset=['Label'])
+            df['Label'] = df['Label'].astype(int)
+            df = df.sort_values('Label').reset_index(drop=True)
         
         # Normalize column names & parse types
         processed_journals = []
