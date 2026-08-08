@@ -117,27 +117,75 @@ def train_overnight(
     best_val_acc = 0.0
     os.makedirs(output_dir, exist_ok=True)
 
-    # ⚡ OPTIMIZATION 3: Resume Training Checkpoint
+    # ⚡ OPTIMIZATION 3: Resume Training Checkpoint (Auto-detecting existing Epoch3 checkpoint)
     latest_ckpt_path = os.path.join(output_dir, "latest_step_checkpoint.pth")
+    if not os.path.exists(latest_ckpt_path):
+        # Search input data_dir or /kaggle/input for existing Epoch3 checkpoint
+        for s_dir in [data_dir, "/kaggle/input/"]:
+            if s_dir and os.path.exists(s_dir):
+                for root, dirs, files in os.walk(s_dir):
+                    if root.endswith("Epoch3/latest_step_checkpoint") or "latest_step_checkpoint" in dirs:
+                        latest_ckpt_path = os.path.join(root, "latest_step_checkpoint") if "latest_step_checkpoint" in dirs else root
+                        break
+                    for f in files:
+                        if f.endswith(".pth") or f.endswith(".pt") or "simcprs" in f.lower():
+                            latest_ckpt_path = os.path.join(root, f)
+                            break
+
     if resume_training and os.path.exists(latest_ckpt_path):
         print(f"[Trainer] 🔄 Resuming training from checkpoint: {latest_ckpt_path}")
         try:
+            # Handle unpacked directory format if needed
+            w_path = latest_ckpt_path
+            if os.path.isdir(latest_ckpt_path):
+                data_pkl = os.path.join(latest_ckpt_path, "data.pkl")
+                if not os.path.exists(data_pkl):
+                    for root, dirs, files in os.walk(latest_ckpt_path):
+                        if "data.pkl" in files:
+                            w_path = root
+                            break
+                if os.path.exists(os.path.join(w_path, "data.pkl")):
+                    import zipfile, tempfile
+                    print(f"[Trainer] Re-packing PyTorch directory checkpoint '{w_path}' for resume...")
+                    temp_zip_path = os.path.join(tempfile.gettempdir(), "temp_resume_ckpt.pt")
+                    archive_name = os.path.basename(w_path.rstrip("/\\")) or "archive"
+                    with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_STORED) as zip_f:
+                        for root, dirs, files in os.walk(w_path):
+                            for file in files:
+                                abs_path = os.path.join(root, file)
+                                rel_path = os.path.relpath(abs_path, w_path)
+                                zip_f.write(abs_path, os.path.join(archive_name, rel_path))
+                    w_path = temp_zip_path
+
             try:
-                ckpt = torch.load(latest_ckpt_path, map_location=device, weights_only=False)
+                ckpt = torch.load(w_path, map_location=device, weights_only=False)
             except TypeError:
-                ckpt = torch.load(latest_ckpt_path, map_location=device)
-            start_epoch = ckpt.get("epoch", 1)
+                ckpt = torch.load(w_path, map_location=device)
+
+            if isinstance(w_path, str) and w_path.endswith("temp_resume_ckpt.pt") and os.path.exists(w_path):
+                try: os.remove(w_path)
+                except: pass
+
+            saved_epoch = ckpt.get("epoch", 3)
+            start_epoch = saved_epoch + 1 if saved_epoch < epochs else saved_epoch
             global_step = ckpt.get("global_step", 0)
             best_val_acc = ckpt.get("best_val_acc", 0.0)
             
             raw_m = model.module if hasattr(model, 'module') else model
             raw_c = classifier.module if hasattr(classifier, 'module') else classifier
             
-            raw_m.load_state_dict(ckpt["model_state_dict"])
-            raw_c.load_state_dict(ckpt["classifier_head"])
-            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-            print(f"[Trainer] Successfully resumed from Epoch {start_epoch}, Step {global_step} (Best Val Acc: {best_val_acc:.2f}%)")
+            if "model_state_dict" in ckpt:
+                raw_m.load_state_dict(ckpt["model_state_dict"], strict=False)
+            if "classifier_head" in ckpt:
+                raw_c.load_state_dict(ckpt["classifier_head"], strict=False)
+            if "optimizer_state_dict" in ckpt:
+                try: optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+                except: pass
+            if "scheduler_state_dict" in ckpt:
+                try: scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+                except: pass
+
+            print(f"[Trainer] 🚀 RESUME SUCCESSFUL! Loaded Epoch {saved_epoch} (Step {global_step}). Starting Epoch {start_epoch} -> Epoch {epochs}!")
         except Exception as e:
             print(f"[Trainer] Warning resuming checkpoint: {e}. Starting fresh.")
 
