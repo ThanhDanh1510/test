@@ -2,8 +2,38 @@ import numpy as np
 from scipy.stats import kendalltau
 
 class Stage3DeARReranker:
-    def __init__(self, faithfulness_threshold=0.42):
+    def __init__(self, faithfulness_threshold=0.42, llm_model=None, tokenizer=None):
         self.faithfulness_threshold = faithfulness_threshold
+        self.llm_model = llm_model
+        self.tokenizer = tokenizer
+
+    def format_dear_prompt(self, paper_object, candidate_list):
+        """
+        Formats structured DeAR Listwise Reasoning Prompt (EMNLP 2025 standard)
+        """
+        candidates_text = ""
+        for idx, c in enumerate(candidate_list, 1):
+            cats = c.get('categories', [])
+            cats_str = ', '.join([str(x) for x in (cats[:2] if isinstance(cats, list) else [cats])])
+            candidates_text += f"\nCandidate [{idx}]: {c['title']}\n"
+            candidates_text += f"  - Quartile: {c['best_quartile']} | SJR: {c['sjr_index']}\n"
+            candidates_text += f"  - Categories: {cats_str}\n"
+            candidates_text += f"  - Aims & Scope: {c.get('aims', '')[:200]}...\n"
+
+        prompt = f"""[TASK]
+You are an expert biomedical journal submission recommender (DeAR Reasoning Agent). 
+Evaluate the candidate journals against the paper's PICO and Study Type.
+
+[PAPER METADATA]
+Title: {paper_object['title']}
+Study Type: {paper_object['study_type']}
+PICO Summary: {paper_object['pico_summary']}
+
+[CANDIDATE JOURNALS POOL]{candidates_text}
+
+[INSTRUCTIONS]
+Provide step-by-step Chain-of-Thought (CoT) reasoning comparing candidate scopes against the paper's PICO, then output the final ranked order from 1 to {len(candidate_list)}."""
+        return prompt
 
     def rerank_and_explain(self, paper_object, candidate_list):
         """
