@@ -79,55 +79,52 @@ class Stage1Retriever:
 
     def _load_simcprs_weights(self, checkpoint_path):
         print(f"[Stage1Retriever] Loading fine-tuned SimCPSR checkpoint: {checkpoint_path}")
+        w_path = checkpoint_path
+        if os.path.isdir(checkpoint_path):
+            data_pkl = os.path.join(checkpoint_path, "data.pkl")
+            if not os.path.exists(data_pkl):
+                for root, dirs, files in os.walk(checkpoint_path):
+                    if "data.pkl" in files:
+                        w_path = root
+                        break
+            if os.path.exists(os.path.join(w_path, "data.pkl")):
+                import zipfile, tempfile
+                print(f"[Stage1Retriever] Re-packing PyTorch 2.x unzipped directory '{w_path}' into valid PyTorch archive...")
+                temp_zip_path = os.path.join(tempfile.gettempdir(), "temp_simcprs_ckpt.pt")
+                archive_name = os.path.basename(w_path.rstrip("/\\")) or "archive"
+                with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_STORED) as zip_f:
+                    for root, dirs, files in os.walk(w_path):
+                        for file in files:
+                            abs_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(abs_path, w_path)
+                            zip_f.write(abs_path, os.path.join(archive_name, rel_path))
+                w_path = temp_zip_path
+
         try:
-            w_path = checkpoint_path
-            if os.path.isdir(checkpoint_path):
-                data_pkl = os.path.join(checkpoint_path, "data.pkl")
-                if not os.path.exists(data_pkl):
-                    # Search subfolder for data.pkl
-                    for root, dirs, files in os.walk(checkpoint_path):
-                        if "data.pkl" in files:
-                            w_path = root
-                            break
-
-                if os.path.exists(os.path.join(w_path, "data.pkl")):
-                    import zipfile
-                    import tempfile
-                    print(f"[Stage1Retriever] Re-packing PyTorch 2.x unzipped directory '{w_path}' into valid PyTorch archive...")
-                    temp_zip_path = os.path.join(tempfile.gettempdir(), "temp_simcprs_ckpt.pt")
-                    archive_name = os.path.basename(w_path.rstrip("/\\")) or "archive"
-                    with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_STORED) as zip_f:
-                        for root, dirs, files in os.walk(w_path):
-                            for file in files:
-                                abs_path = os.path.join(root, file)
-                                rel_path = os.path.relpath(abs_path, w_path)
-                                # PyTorch C++ zip reader requires all archive items to be under a top-level folder
-                                zip_f.write(abs_path, os.path.join(archive_name, rel_path))
-                    w_path = temp_zip_path
-
-            print(f"[Stage1Retriever] Loading weights file: {w_path}")
             try:
-                raw_state = torch.load(w_path, map_location=self.device, weights_only=False)
+                ckpt = torch.load(w_path, map_location=self.device, weights_only=False)
             except TypeError:
-                raw_state = torch.load(w_path, map_location=self.device)
+                ckpt = torch.load(w_path, map_location=self.device)
 
             if isinstance(w_path, str) and w_path.endswith("temp_simcprs_ckpt.pt") and os.path.exists(w_path):
                 try: os.remove(w_path)
                 except: pass
-            if isinstance(raw_state, dict):
-                if 'model_state_dict' in raw_state:
-                    raw_state = raw_state['model_state_dict']
-                elif 'state_dict' in raw_state:
-                    raw_state = raw_state['state_dict']
-                elif 'model' in raw_state:
-                    raw_state = raw_state['model']
+
+            raw_state = ckpt
+            if isinstance(ckpt, dict):
+                if 'model_state_dict' in ckpt:
+                    raw_state = dict(ckpt['model_state_dict'])
+                    if 'classifier_head' in ckpt and isinstance(ckpt['classifier_head'], dict):
+                        for k, v in ckpt['classifier_head'].items():
+                            raw_state[k] = v
+                elif 'state_dict' in ckpt:
+                    raw_state = dict(ckpt['state_dict'])
 
             model_keys = set(self.model.state_dict().keys())
             cleaned_state = {}
 
             for k, v in raw_state.items():
                 new_k = k
-                # Strip common prefixes from DataParallel / Peft / Base_model checkpoints
                 for prefix in [
                     'module.base_model.', 'base_model.',
                     'module.paper_encoder.', 'paper_encoder.',
@@ -136,6 +133,7 @@ class Stage1Retriever:
                 ]:
                     if new_k.startswith(prefix):
                         new_k = new_k[len(prefix):]
+                        break
 
                 if new_k in model_keys:
                     cleaned_state[new_k] = v
@@ -147,7 +145,9 @@ class Stage1Retriever:
                     cleaned_state[f"projection.{new_k}"] = v
 
             matched_count = len(cleaned_state)
-            print(f"[Stage1Retriever] Key matching report: Matched {matched_count}/{len(model_keys)} layers.")
+            has_linear1 = "linear1_1.weight" in cleaned_state
+            has_linear_main = "linear_main_1.weight" in cleaned_state
+            print(f"[Stage1Retriever] Key matching report: Matched {matched_count}/{len(model_keys)} layers (Linear Heads Loaded: linear1_1={has_linear1}, linear_main_1={has_linear_main}).")
             
             if matched_count > 0:
                 self.model.load_state_dict(cleaned_state, strict=False)
