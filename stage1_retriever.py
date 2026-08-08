@@ -17,44 +17,33 @@ except ImportError:
 
 class BioBERTSimCPSREncoder(nn.Module):
     """
-    MedPRS Multi-Class Classifier Architecture (tnt1626/DeAR-Reranking standard)
+    BioBERT SimCPSR Dual-Branch Projection Architecture (MedPRS Approach C)
     - BioBERT Encoder (768)
-    - Dense Projections (linear1_1: 768->512, linear2_1: 768->512)
-    - Classification Head (linear_main_1: 1918 -> num_classes=1406)
+    - Linear Projection (linear1_1: 768 -> 512)
+    - Cosine Normalization for FAISS Indexing
     """
-    def __init__(self, model_name="dmis-lab/biobert-base-cased-v1.1", num_classes=1406):
+    def __init__(self, model_name="dmis-lab/biobert-base-cased-v1.1"):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name)
         self.linear1_1 = nn.Linear(768, 512)
-        self.linear2_1 = nn.Linear(768, 512)
-        self.linear_main_1 = nn.Linear(1918, num_classes)
 
     def forward(self, input_ids, attention_mask):
         outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         cls_rep = outputs.last_hidden_state[:, 0, :]
         p_proj = torch.relu(self.linear1_1(cls_rep))
-        
-        # Construct 1918-dim feature vector matching MedPRS classifier checkpoint
-        # 512 (paper proj) + 512 (journal proj) + 768 (cls rep) + 126 (meta features) = 1918
-        batch_size = cls_rep.size(0)
-        dummy_j_proj = torch.zeros(batch_size, 512, device=cls_rep.device)
-        dummy_meta = torch.zeros(batch_size, 126, device=cls_rep.device)
-        
-        feat = torch.cat([p_proj, dummy_j_proj, cls_rep, dummy_meta], dim=1)
-        logits = self.linear_main_1(feat)
-        return logits
+        normed = nn.functional.normalize(p_proj, p=2, dim=1)
+        return normed
 
 class Stage1Retriever:
     def __init__(self, journal_df, checkpoint_path=None, device=None):
         self.journal_df = journal_df
-        self.journal_ids = self.journal_df['journal_id'].tolist()
-        num_classes = len(self.journal_df)
+        self.journal_ids = []
         
         if HAS_TORCH:
             self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
             print(f"[Stage1Retriever] Initializing encoder on device: {self.device}")
             self.tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
-            self.model = BioBERTSimCPSREncoder(num_classes=num_classes).to(self.device)
+            self.model = BioBERTSimCPSREncoder().to(self.device)
             
             if checkpoint_path and os.path.exists(checkpoint_path):
                 self._load_simcprs_weights(checkpoint_path)
@@ -62,6 +51,7 @@ class Stage1Retriever:
                 print(f"[Stage1Retriever] Note: No checkpoint_path passed or found. Using base BioBERT weights.")
 
             self.model.eval()
+            self._build_journal_faiss_index()
 
     def _load_simcprs_weights(self, checkpoint_path):
         print(f"[Stage1Retriever] Loading fine-tuned SimCPSR checkpoint: {checkpoint_path}")
@@ -184,10 +174,15 @@ class Stage1Retriever:
         if HAS_TORCH:
             inputs = self.tokenizer(p_text, max_length=512, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
             with torch.no_grad():
-                logits = self.model(inputs['input_ids'], inputs['attention_mask'])
-                top_scores, top_indices = torch.topk(logits[0], k=min(top_k, logits.size(1)))
-                top_scores = top_scores.cpu().numpy()
-                top_indices = top_indices.cpu().numpy()
+                query_emb = self.model(inputs['input_ids'], inputs['attention_mask']).cpu().numpy().astype('float32')
+            if HAS_FAISS and hasattr(self, 'index') and self.index is not None:
+                scores, indices = self.index.search(query_emb, top_k)
+                top_scores = scores[0]
+                top_indices = indices[0]
+            else:
+                sims = np.dot(self.journal_embeddings, query_emb[0])
+                top_indices = np.argsort(sims)[::-1][:top_k]
+                top_scores = sims[top_indices]
         else:
             query_emb = self.vectorizer.transform([p_text]).toarray()[0]
             sims = np.dot(self.journal_embeddings, query_emb)
@@ -196,11 +191,8 @@ class Stage1Retriever:
         
         results = []
         for rank, (score, idx) in enumerate(zip(top_scores, top_indices)):
-            if idx < len(self.journal_ids):
-                j_id = self.journal_ids[idx]
-                j_row = self.journal_df[self.journal_df['journal_id'] == j_id].iloc[0].to_dict()
-            else:
-                j_row = self.journal_df.iloc[idx % len(self.journal_df)].to_dict()
+            j_id = self.journal_ids[idx]
+            j_row = self.journal_df[self.journal_df['journal_id'] == j_id].iloc[0].to_dict()
             j_row['dense_similarity_score'] = float(score)
             results.append(j_row)
 
