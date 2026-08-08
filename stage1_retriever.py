@@ -63,32 +63,36 @@ class Stage1Retriever:
         try:
             w_path = checkpoint_path
             if os.path.isdir(checkpoint_path):
-                # If directory contains PyTorch state files directly (like data.pkl)
                 data_pkl = os.path.join(checkpoint_path, "data.pkl")
-                if os.path.exists(data_pkl):
-                    w_path = data_pkl
-                else:
-                    # Look for subfolders or files inside
+                if not os.path.exists(data_pkl):
+                    # Search subfolder for data.pkl
                     for root, dirs, files in os.walk(checkpoint_path):
-                        for d in dirs:
-                            sub_pkl = os.path.join(root, d, "data.pkl")
-                            if os.path.exists(sub_pkl):
-                                w_path = sub_pkl
-                                break
-                        if w_path != checkpoint_path:
+                        if "data.pkl" in files:
+                            w_path = root
                             break
-                        for f in files:
-                            if f.endswith(".pth") or f.endswith(".pt") or f.endswith(".bin") or "simcprs" in f.lower() or "epoch" in f.lower():
-                                w_path = os.path.join(root, f)
-                                break
-                        if w_path != checkpoint_path:
-                            break
+
+                if os.path.exists(os.path.join(w_path, "data.pkl")):
+                    import zipfile
+                    import tempfile
+                    print(f"[Stage1Retriever] Re-packing PyTorch 2.x unzipped directory '{w_path}' into valid PyTorch archive...")
+                    temp_zip_path = os.path.join(tempfile.gettempdir(), "temp_simcprs_ckpt.pt")
+                    with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_STORED) as zip_f:
+                        for root, dirs, files in os.walk(w_path):
+                            for file in files:
+                                abs_path = os.path.join(root, file)
+                                rel_path = os.path.relpath(abs_path, w_path)
+                                zip_f.write(abs_path, rel_path)
+                    w_path = temp_zip_path
 
             print(f"[Stage1Retriever] Loading weights file: {w_path}")
             try:
                 raw_state = torch.load(w_path, map_location=self.device, weights_only=False)
             except TypeError:
                 raw_state = torch.load(w_path, map_location=self.device)
+
+            if isinstance(w_path, str) and w_path.endswith("temp_simcprs_ckpt.pt") and os.path.exists(w_path):
+                try: os.remove(w_path)
+                except: pass
             if isinstance(raw_state, dict):
                 if 'model_state_dict' in raw_state:
                     raw_state = raw_state['model_state_dict']
