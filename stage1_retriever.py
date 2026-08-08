@@ -76,12 +76,14 @@ class Stage1Retriever:
                     import tempfile
                     print(f"[Stage1Retriever] Re-packing PyTorch 2.x unzipped directory '{w_path}' into valid PyTorch archive...")
                     temp_zip_path = os.path.join(tempfile.gettempdir(), "temp_simcprs_ckpt.pt")
+                    archive_name = os.path.basename(w_path.rstrip("/\\")) or "archive"
                     with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_STORED) as zip_f:
                         for root, dirs, files in os.walk(w_path):
                             for file in files:
                                 abs_path = os.path.join(root, file)
                                 rel_path = os.path.relpath(abs_path, w_path)
-                                zip_f.write(abs_path, rel_path)
+                                # PyTorch C++ zip reader requires all archive items to be under a top-level folder
+                                zip_f.write(abs_path, os.path.join(archive_name, rel_path))
                     w_path = temp_zip_path
 
             print(f"[Stage1Retriever] Loading weights file: {w_path}")
