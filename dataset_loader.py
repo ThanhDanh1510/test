@@ -46,15 +46,14 @@ class MedPRSDatasetLoader:
                         return found_path
         return None
 
-    def load_journals(self, journal_csv_name="journal_full_info.csv"):
-        """Loads and prepares journal metadata from journal_full_info.csv"""
+    def load_journals(self, journal_csv_name="journal_category.csv"):
+        """Loads and prepares journal metadata from journal_category.csv or journal_full_info.csv"""
         file_path = self.find_file(journal_csv_name)
         if not file_path:
-            # Fallback to journal_category.csv if available
-            file_path = self.find_file("journal_category.csv")
+            file_path = self.find_file("journal_full_info.csv")
             
         if not file_path:
-            raise FileNotFoundError(f"Could not find journal metadata file ({journal_csv_name} or journal_category.csv).")
+            raise FileNotFoundError(f"Could not find journal metadata file ({journal_csv_name} or journal_full_info.csv).")
 
         print(f"[DatasetLoader] Loading journal metadata from: {file_path}")
         df = pd.read_csv(file_path)

@@ -163,20 +163,8 @@ class Stage1Retriever:
         j_embeddings = []
         with torch.no_grad():
             for idx, row in self.journal_df.iterrows():
-                cats = row['categories']
-                if isinstance(cats, list):
-                    cats_flat = []
-                    for c in cats:
-                        if isinstance(c, list):
-                            cats_flat.extend([str(x) for x in c])
-                        else:
-                            cats_flat.append(str(c))
-                    cats_str = ', '.join(cats_flat)
-                else:
-                    cats_str = str(cats)
-
-                j_text = f"Journal: {row['title']}. Aims: {row['aims']}. Scope: {row['scope']}. Categories: {cats_str}"
-                inputs = self.tokenizer(j_text, max_length=512, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
+                j_title = str(row['title']).strip()
+                inputs = self.tokenizer(j_title, max_length=128, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
                 j_proj = self.model.encode_journal(inputs['input_ids'], inputs['attention_mask'])
                 j_embeddings.append(j_proj.squeeze(0))
 
@@ -184,8 +172,12 @@ class Stage1Retriever:
         print(f"[Stage1Retriever] Successfully pre-computed {self.journal_proj_tensor.size(0)} journal projected embeddings tensor of shape {self.journal_proj_tensor.shape}.")
 
     def retrieve(self, paper_object, top_k=50):
-        p_text = f"Title: {paper_object['title']}. Abstract: {paper_object['abstract']}. Keywords: {paper_object['keywords']}"
-        
+        title = paper_object.get('title', '')
+        abstract = paper_object.get('abstract', '')
+        p_text = f"{title} {abstract}".strip()
+        if not p_text:
+            p_text = paper_object.get('keywords', 'Medical research paper')
+
         if HAS_TORCH:
             inputs = self.tokenizer(p_text, max_length=512, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
             with torch.no_grad():
@@ -202,9 +194,8 @@ class Stage1Retriever:
         
         results = []
         for rank, (score, idx) in enumerate(zip(top_scores, top_indices)):
-            if idx < len(self.journal_ids):
-                j_id = self.journal_ids[idx]
-                j_row = self.journal_df[self.journal_df['journal_id'] == j_id].iloc[0].to_dict()
+            if idx < len(self.journal_df):
+                j_row = self.journal_df.iloc[idx].to_dict()
             else:
                 j_row = self.journal_df.iloc[idx % len(self.journal_df)].to_dict()
             j_row['dense_similarity_score'] = float(score)
