@@ -63,18 +63,18 @@ class Stage1Retriever:
         try:
             w_path = checkpoint_path
             if os.path.isdir(checkpoint_path):
-                # If directory contains PyTorch state files directly
-                if os.path.exists(os.path.join(checkpoint_path, "data.pkl")) or os.path.exists(os.path.join(checkpoint_path, "byteorder")):
-                    w_path = checkpoint_path
+                # If directory contains PyTorch state files directly (like data.pkl)
+                data_pkl = os.path.join(checkpoint_path, "data.pkl")
+                if os.path.exists(data_pkl):
+                    w_path = data_pkl
                 else:
-                    # Look for subfolders like latest_step_checkpoint or files
+                    # Look for subfolders or files inside
                     for root, dirs, files in os.walk(checkpoint_path):
                         for d in dirs:
-                            if "latest_step" in d.lower() or "checkpoint" in d.lower() or "epoch" in d.lower():
-                                candidate_dir = os.path.join(root, d)
-                                if os.path.exists(os.path.join(candidate_dir, "data.pkl")) or any(f.endswith(('.pth', '.pt', '.bin')) for f in os.listdir(candidate_dir)):
-                                    w_path = candidate_dir
-                                    break
+                            sub_pkl = os.path.join(root, d, "data.pkl")
+                            if os.path.exists(sub_pkl):
+                                w_path = sub_pkl
+                                break
                         if w_path != checkpoint_path:
                             break
                         for f in files:
