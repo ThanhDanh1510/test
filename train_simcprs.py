@@ -211,7 +211,13 @@ def train_overnight(
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     total_steps = len(train_loader) * (epochs - start_epoch + 1)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(total_steps * 0.1), num_training_steps=total_steps)
-    scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
+    
+    # Modern PyTorch 2.x GradScaler syntax
+    try:
+        scaler = torch.amp.GradScaler('cuda', enabled=use_fp16)
+    except AttributeError:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
+
     criterion = nn.CrossEntropyLoss()
 
     def save_checkpoint(save_name, epoch_num, step_num, current_val_acc):
@@ -253,7 +259,12 @@ def train_overnight(
 
             optimizer.zero_grad()
 
-            with torch.cuda.amp.autocast(enabled=use_fp16):
+            try:
+                autocast_ctx = torch.amp.autocast('cuda', enabled=use_fp16)
+            except AttributeError:
+                autocast_ctx = torch.cuda.amp.autocast(enabled=use_fp16)
+
+            with autocast_ctx:
                 paper_proj = m_eval.encode_paper(input_ids, attention_mask)
                 logits = m_eval.forward_logits(paper_proj, j_proj_tensor)
                 loss = criterion(logits, labels)
