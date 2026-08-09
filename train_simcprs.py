@@ -46,28 +46,29 @@ class MedPRSTrainDataset(Dataset):
 def train_overnight(
     data_dir="/kaggle/input/medprs-dataset/",
     output_dir="/kaggle/working/",
-    epochs=10, # Chuẩn 10 Epochs theo bài báo MedPRS gốc
-    batch_size=64, # Optimized for 2x T4 GPUs (32 per GPU)
+    epochs=10,
+    batch_size=64,
     lr=5e-5,
-    save_step_frequency=1000, # Save checkpoint every 1000 steps
-    use_fp16=True, # Mixed Precision FP16
-    resume_training=True
+    save_step_frequency=1000,
+    use_fp16=True,
+    resume_training=True,
+    epoch2_checkpoint="/kaggle/input/datasets/tintngc/medprs-dataset/Epoch_02_SIMCPRS_dmis-lab_biobert-v1_1_CL.pth"
 ):
     print("=======================================================")
-    print("STARTING OPTIMIZED OVERNIGHT TRAINING (2x T4 GPU + AMP FP16)")
+    print("STARTING CONTINUOUS SIMCPSR TRAINING (EPOCH 3 -> EPOCH 10)")
     print(f"Data Dir: {data_dir} | Output Dir: {output_dir}")
-    print(f"Epochs: {epochs} | Batch Size: {batch_size} | Save Step Freq: {save_step_frequency}")
+    print(f"Target Epochs: {epochs} | Batch Size: {batch_size} | Save Step Freq: {save_step_frequency}")
     print("=======================================================\n")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_gpus = torch.cuda.device_count()
     print(f"[Trainer] Detected {num_gpus} GPU(s). Primary device: {device}")
 
-    # 1. Load Datasets
+    # 1. Load Datasets & Journals
     loader = MedPRSDatasetLoader(data_dir=data_dir)
     journal_df = loader.load_journals()
     num_classes = len(journal_df)
-    print(f"[Trainer] Target journal classes: {num_classes}")
+    print(f"[Trainer] Loaded {num_classes} journal classes.")
 
     train_df = loader.load_papers(split="train")
     val_df = loader.load_papers(split="val")
@@ -90,116 +91,136 @@ def train_overnight(
         num_workers=4 if num_gpus > 1 else 2
     )
 
-    # 2. Initialize Model & Multi-GPU Wrapper
-    base_model = BioBERTSimCPSREncoder().to(device)
-    classifier_head = nn.Linear(768, num_classes).to(device)
+    # 2. Pre-tokenize all journal titles for journal_proj calculation
+    print("[Trainer] Pre-tokenizing 1,406 journal titles for dual-branch training...")
+    j_titles = [str(r['title']).strip() for _, r in journal_df.iterrows()]
+    j_tokenized = tokenizer(j_titles, max_length=128, padding="max_length", truncation=True, return_tensors="pt")
+    j_input_ids = j_tokenized['input_ids'].to(device)
+    j_attn_mask = j_tokenized['attention_mask'].to(device)
 
-    # ⚡ OPTIMIZATION 1: Multi-GPU DataParallel for 2x T4
-    if num_gpus > 1:
-        print(f"[Trainer] ⚡ Enabling Multi-GPU DataParallel across {num_gpus} GPUs!")
-        model = nn.DataParallel(base_model)
-        classifier = nn.DataParallel(classifier_head)
-    else:
-        model = base_model
-        classifier = classifier_head
+    # 3. Initialize SimCPSR Model Architecture
+    raw_model = BioBERTSimCPSREncoder(num_classes=num_classes).to(device)
 
-    # ⚡ OPTIMIZATION 2: Mixed Precision Scaler (FP16)
-    scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
-
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(list(model.parameters()) + list(classifier.parameters()), lr=lr, weight_decay=0.01)
-
-    total_steps = len(train_loader) * epochs
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(total_steps * 0.1), num_training_steps=total_steps)
-
-    start_epoch = 1
+    start_epoch = 3  # Resuming from Epoch 2 completion
     global_step = 0
     best_val_acc = 0.0
     os.makedirs(output_dir, exist_ok=True)
 
-    # ⚡ OPTIMIZATION 3: Resume Training Checkpoint (Auto-detecting existing Epoch3 checkpoint)
-    latest_ckpt_path = os.path.join(output_dir, "latest_step_checkpoint.pth")
-    if not os.path.exists(latest_ckpt_path):
-        # Search input data_dir or /kaggle/input for existing Epoch3 checkpoint
-        for s_dir in [data_dir, "/kaggle/input/"]:
-            if s_dir and os.path.exists(s_dir):
-                for root, dirs, files in os.walk(s_dir):
-                    if root.endswith("Epoch3/latest_step_checkpoint") or "latest_step_checkpoint" in dirs:
-                        latest_ckpt_path = os.path.join(root, "latest_step_checkpoint") if "latest_step_checkpoint" in dirs else root
-                        break
-                    for f in files:
-                        if f.endswith(".pth") or f.endswith(".pt") or "simcprs" in f.lower():
-                            latest_ckpt_path = os.path.join(root, f)
-                            break
+    # 4. Auto-detect & Load Epoch 2 Checkpoint
+    target_ckpt = None
+    check_candidates = [
+        os.path.join(output_dir, "latest_step_checkpoint.pth"),
+        epoch2_checkpoint,
+        os.path.join(data_dir, "Epoch_02_SIMCPRS_dmis-lab_biobert-v1_1_CL.pth")
+    ]
+    for c in check_candidates:
+        if c and os.path.exists(c):
+            target_ckpt = c
+            break
 
-    if resume_training and os.path.exists(latest_ckpt_path):
-        print(f"[Trainer] 🔄 Resuming training from checkpoint: {latest_ckpt_path}")
+    if not target_ckpt and os.path.exists("/kaggle/input/"):
+        for root, dirs, files in os.walk("/kaggle/input/"):
+            for f in files:
+                if "epoch_02" in f.lower() or "epoch02" in f.lower() or "latest_step" in f.lower():
+                    target_ckpt = os.path.join(root, f)
+                    break
+            if target_ckpt: break
+
+    if resume_training and target_ckpt and os.path.exists(target_ckpt):
+        print(f"[Trainer] 🔄 Resuming training from checkpoint: {target_ckpt}")
         try:
-            # Handle unpacked directory format if needed
-            w_path = latest_ckpt_path
-            if os.path.isdir(latest_ckpt_path):
-                data_pkl = os.path.join(latest_ckpt_path, "data.pkl")
+            w_path = target_ckpt
+            if os.path.isdir(target_ckpt):
+                data_pkl = os.path.join(target_ckpt, "data.pkl")
                 if not os.path.exists(data_pkl):
-                    for root, dirs, files in os.walk(latest_ckpt_path):
+                    for root, dirs, files in os.walk(target_ckpt):
                         if "data.pkl" in files:
                             w_path = root
                             break
                 if os.path.exists(os.path.join(w_path, "data.pkl")):
                     import zipfile, tempfile
-                    print(f"[Trainer] Re-packing PyTorch directory checkpoint '{w_path}' for resume...")
-                    temp_zip_path = os.path.join(tempfile.gettempdir(), "temp_resume_ckpt.pt")
+                    print(f"[Trainer] Re-packing directory checkpoint '{w_path}'...")
+                    temp_zip = os.path.join(tempfile.gettempdir(), "temp_train_ckpt.pt")
                     archive_name = os.path.basename(w_path.rstrip("/\\")) or "archive"
-                    with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_STORED) as zip_f:
+                    with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_STORED) as zf:
                         for root, dirs, files in os.walk(w_path):
                             for file in files:
-                                abs_path = os.path.join(root, file)
-                                rel_path = os.path.relpath(abs_path, w_path)
-                                zip_f.write(abs_path, os.path.join(archive_name, rel_path))
-                    w_path = temp_zip_path
+                                abs_p = os.path.join(root, file)
+                                rel_p = os.path.relpath(abs_p, w_path)
+                                zf.write(abs_p, os.path.join(archive_name, rel_p))
+                    w_path = temp_zip
 
             try:
                 ckpt = torch.load(w_path, map_location=device, weights_only=False)
             except TypeError:
                 ckpt = torch.load(w_path, map_location=device)
 
-            if isinstance(w_path, str) and w_path.endswith("temp_resume_ckpt.pt") and os.path.exists(w_path):
+            if isinstance(w_path, str) and w_path.endswith("temp_train_ckpt.pt") and os.path.exists(w_path):
                 try: os.remove(w_path)
                 except: pass
 
-            saved_epoch = ckpt.get("epoch", 3)
-            start_epoch = saved_epoch + 1 if saved_epoch < epochs else saved_epoch
-            global_step = ckpt.get("global_step", 0)
-            best_val_acc = ckpt.get("best_val_acc", 0.0)
-            
-            raw_m = model.module if hasattr(model, 'module') else model
-            raw_c = classifier.module if hasattr(classifier, 'module') else classifier
-            
-            if "model_state_dict" in ckpt:
-                raw_m.load_state_dict(ckpt["model_state_dict"], strict=False)
-            if "classifier_head" in ckpt:
-                raw_c.load_state_dict(ckpt["classifier_head"], strict=False)
-            if "optimizer_state_dict" in ckpt:
-                try: optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-                except: pass
-            if "scheduler_state_dict" in ckpt:
-                try: scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-                except: pass
+            state_dict = ckpt
+            if isinstance(ckpt, dict):
+                if "epoch" in ckpt:
+                    saved_ep = ckpt["epoch"]
+                    start_epoch = saved_ep + 1 if saved_ep < epochs else saved_ep
+                    global_step = ckpt.get("global_step", 0)
+                    best_val_acc = ckpt.get("best_val_acc", 0.0)
 
-            print(f"[Trainer] 🚀 RESUME SUCCESSFUL! Loaded Epoch {saved_epoch} (Step {global_step}). Starting Epoch {start_epoch} -> Epoch {epochs}!")
+                if "model_state_dict" in ckpt:
+                    state_dict = dict(ckpt["model_state_dict"])
+                    if "classifier_head" in ckpt and isinstance(ckpt["classifier_head"], dict):
+                        for k, v in ckpt["classifier_head"].items():
+                            state_dict[k] = v
+                elif "state_dict" in ckpt:
+                    state_dict = dict(ckpt["state_dict"])
+
+            model_dict = raw_model.state_dict()
+            cleaned_state = {}
+            matched = 0
+
+            for k, v in state_dict.items():
+                clean_k = k
+                for prefix in ["base_model.bert.", "base_model.", "paper_encoder.", "encoder.", "module."]:
+                    if clean_k.startswith(prefix):
+                        clean_k = clean_k[len(prefix):]
+                        break
+
+                if clean_k in model_dict and model_dict[clean_k].shape == v.shape:
+                    cleaned_state[clean_k] = v
+                    matched += 1
+                elif f"encoder.{clean_k}" in model_dict and model_dict[f"encoder.{clean_k}"].shape == v.shape:
+                    cleaned_state[f"encoder.{clean_k}"] = v
+                    matched += 1
+                elif k in model_dict and model_dict[k].shape == v.shape:
+                    cleaned_state[k] = v
+                    matched += 1
+
+            raw_model.load_state_dict(cleaned_state, strict=False)
+            print(f"[Trainer] 🚀 SUCCESSFUL RESUME! Loaded {matched}/{len(model_dict)} layers from {target_ckpt}. Starting Epoch {start_epoch} -> Epoch {epochs}!")
         except Exception as e:
-            print(f"[Trainer] Warning resuming checkpoint: {e}. Starting fresh.")
+            print(f"[Trainer] Warning resuming checkpoint: {e}. Starting fresh at Epoch 3.")
 
-    # Helper function to save checkpoint ("Train tới đâu lưu tới đó")
+    # Multi-GPU DataParallel setup
+    if num_gpus > 1:
+        print(f"[Trainer] ⚡ Enabling Multi-GPU DataParallel across {num_gpus} GPUs!")
+        model = nn.DataParallel(raw_model)
+    else:
+        model = raw_model
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+    total_steps = len(train_loader) * (epochs - start_epoch + 1)
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(total_steps * 0.1), num_training_steps=total_steps)
+    scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
+    criterion = nn.CrossEntropyLoss()
+
     def save_checkpoint(save_name, epoch_num, step_num, current_val_acc):
         ckpt_path = os.path.join(output_dir, save_name)
-        raw_m = model.module if hasattr(model, 'module') else model
-        raw_c = classifier.module if hasattr(classifier, 'module') else classifier
-        
+        m_save = model.module if hasattr(model, 'module') else model
         save_dict = {
             "epoch": epoch_num,
             "global_step": step_num,
-            "model_state_dict": raw_m.state_dict(),
-            "classifier_head": raw_c.state_dict(),
+            "model_state_dict": m_save.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "best_val_acc": current_val_acc,
@@ -210,12 +231,19 @@ def train_overnight(
 
     # --- Training Loop ---
     for epoch in range(start_epoch, epochs + 1):
-        print(f"\n--- Epoch {epoch}/{epochs} ---")
+        print(f"\n==========================================")
+        print(f"STARTING EPOCH {epoch}/{epochs}")
+        print(f"==========================================")
         model.train()
-        classifier.train()
-
         total_loss = 0.0
         start_time = time.time()
+
+        # Compute journal embeddings for current epoch
+        m_eval = model.module if hasattr(model, 'module') else model
+        m_eval.eval()
+        with torch.no_grad():
+            j_proj_tensor = m_eval.encode_journal(j_input_ids, j_attn_mask)
+        m_eval.train()
 
         for step, batch in enumerate(train_loader, 1):
             global_step += 1
@@ -225,10 +253,9 @@ def train_overnight(
 
             optimizer.zero_grad()
 
-            # ⚡ Mixed Precision Autocast (FP16)
             with torch.cuda.amp.autocast(enabled=use_fp16):
-                embeddings = model(input_ids, attention_mask)
-                logits = classifier(embeddings)
+                paper_proj = m_eval.encode_paper(input_ids, attention_mask)
+                logits = m_eval.forward_logits(paper_proj, j_proj_tensor)
                 loss = criterion(logits, labels)
 
             scaler.scale(loss).backward()
@@ -240,41 +267,36 @@ def train_overnight(
 
             total_loss += loss.item()
 
-            # Progress logging every 200 steps
             if step % 200 == 0 or step == len(train_loader):
                 elapsed = time.time() - start_time
                 steps_per_sec = step / max(1.0, elapsed)
                 print(f"Epoch {epoch} | Step {step}/{len(train_loader)} (Global {global_step}) | Loss: {total_loss / step:.4f} | Speed: {steps_per_sec:.1f} steps/s | Elapsed: {elapsed/60:.1f}m")
 
-            # ⚡ STEP CHECKPOINT: "Train tới đâu lưu tới đó" (Lưu mỗi save_step_frequency steps)
             if global_step % save_step_frequency == 0:
                 save_checkpoint("latest_step_checkpoint.pth", epoch, global_step, best_val_acc)
 
-        # End of Epoch Checkpoint
         save_checkpoint(f"epoch_{epoch}_checkpoint.pth", epoch, global_step, best_val_acc)
 
-        # Validation Phase
+        # Validation Loop
         print(f"\n[Validation] Evaluating Epoch {epoch} on Validation Set...")
-        model.eval()
-        classifier.eval()
-
+        m_eval.eval()
         val_hits_1, val_hits_10, val_total = 0, 0, 0
         with torch.no_grad():
+            j_proj_val = m_eval.encode_journal(j_input_ids, j_attn_mask)
             for batch in val_loader:
                 input_ids = batch['input_ids'].to(device)
                 attention_mask = batch['attention_mask'].to(device)
                 labels = batch['label'].to(device)
 
                 with torch.cuda.amp.autocast(enabled=use_fp16):
-                    embeddings = model(input_ids, attention_mask)
-                    logits = classifier(embeddings)
+                    paper_proj = m_eval.encode_paper(input_ids, attention_mask)
+                    logits = m_eval.forward_logits(paper_proj, j_proj_val)
 
                 _, top1_preds = torch.max(logits, dim=1)
                 val_hits_1 += (top1_preds == labels).sum().item()
 
                 _, top10_preds = torch.topk(logits, k=10, dim=1)
                 val_hits_10 += (top10_preds == labels.unsqueeze(1)).sum().item()
-
                 val_total += labels.size(0)
 
         val_acc1 = (val_hits_1 / val_total) * 100.0
@@ -287,7 +309,7 @@ def train_overnight(
             print(f"🎉 NEW BEST MODEL! (Val Top-10: {val_acc10:.2f}%) saved to 'best_simcprs_checkpoint.pth'")
 
     print("\n=======================================================")
-    print(f"OVERNIGHT TRAINING COMPLETED! Best Val Top-10 Acc: {best_val_acc:.2f}%")
+    print(f"TRAINING COMPLETED! Best Val Top-10 Acc: {best_val_acc:.2f}%")
     print(f"Saved Checkpoints in: {output_dir}")
     print("=======================================================")
 
