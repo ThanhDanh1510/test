@@ -60,8 +60,12 @@ def train_overnight(
     print(f"Target Epochs: {epochs} | Batch Size: {batch_size} | Save Step Freq: {save_step_frequency}")
     print("=======================================================\n")
 
+    import gc
+    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+        try: torch.cuda.ipc_collect()
+        except: pass
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_gpus = torch.cuda.device_count()
