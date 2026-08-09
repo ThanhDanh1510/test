@@ -47,7 +47,7 @@ def train_overnight(
     data_dir="/kaggle/input/medprs-dataset/",
     output_dir="/kaggle/working/",
     epochs=10,
-    batch_size=64,
+    batch_size=32,  # Tối ưu 32 (16 per GPU) tránh tràn VRAM GPU
     lr=5e-5,
     save_step_frequency=1000,
     use_fp16=True,
@@ -59,6 +59,9 @@ def train_overnight(
     print(f"Data Dir: {data_dir} | Output Dir: {output_dir}")
     print(f"Target Epochs: {epochs} | Batch Size: {batch_size} | Save Step Freq: {save_step_frequency}")
     print("=======================================================\n")
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_gpus = torch.cuda.device_count()
@@ -81,14 +84,14 @@ def train_overnight(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4 if num_gpus > 1 else 2,
+        num_workers=2,
         pin_memory=True
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=4 if num_gpus > 1 else 2
+        num_workers=2
     )
 
     # 2. Pre-tokenize all journal titles for journal_proj calculation
@@ -97,6 +100,26 @@ def train_overnight(
     j_tokenized = tokenizer(j_titles, max_length=128, padding="max_length", truncation=True, return_tensors="pt")
     j_input_ids = j_tokenized['input_ids'].to(device)
     j_attn_mask = j_tokenized['attention_mask'].to(device)
+
+    # Helper function to compute journal projected tensor in mini-batches safely
+    def compute_journal_proj_tensor(model_obj):
+        m_eval = model_obj.module if hasattr(model_obj, 'module') else model_obj
+        m_eval.eval()
+        j_embeddings = []
+        with torch.no_grad():
+            for i in range(0, len(j_input_ids), 128):
+                b_ids = j_input_ids[i:i+128]
+                b_mask = j_attn_mask[i:i+128]
+                try:
+                    autocast_ctx = torch.amp.autocast('cuda', enabled=use_fp16)
+                except AttributeError:
+                    autocast_ctx = torch.cuda.amp.autocast(enabled=use_fp16)
+                with autocast_ctx:
+                    emb = m_eval.encode_journal(b_ids, b_mask)
+                j_embeddings.append(emb)
+        j_proj = torch.cat(j_embeddings, dim=0).detach()
+        m_eval.train()
+        return j_proj
 
     # 3. Initialize SimCPSR Model Architecture
     raw_model = BioBERTSimCPSREncoder(num_classes=num_classes).to(device)
@@ -212,7 +235,6 @@ def train_overnight(
     total_steps = len(train_loader) * (epochs - start_epoch + 1)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(total_steps * 0.1), num_training_steps=total_steps)
     
-    # Modern PyTorch 2.x GradScaler syntax
     try:
         scaler = torch.amp.GradScaler('cuda', enabled=use_fp16)
     except AttributeError:
@@ -240,16 +262,13 @@ def train_overnight(
         print(f"\n==========================================")
         print(f"STARTING EPOCH {epoch}/{epochs}")
         print(f"==========================================")
+        
+        # Pre-compute journal embeddings safely with detach()
+        j_proj_tensor = compute_journal_proj_tensor(model)
+
         model.train()
         total_loss = 0.0
         start_time = time.time()
-
-        # Compute journal embeddings for current epoch
-        m_eval = model.module if hasattr(model, 'module') else model
-        m_eval.eval()
-        with torch.no_grad():
-            j_proj_tensor = m_eval.encode_journal(j_input_ids, j_attn_mask)
-        m_eval.train()
 
         for step, batch in enumerate(train_loader, 1):
             global_step += 1
@@ -265,8 +284,9 @@ def train_overnight(
                 autocast_ctx = torch.cuda.amp.autocast(enabled=use_fp16)
 
             with autocast_ctx:
-                paper_proj = m_eval.encode_paper(input_ids, attention_mask)
-                logits = m_eval.forward_logits(paper_proj, j_proj_tensor)
+                m_curr = model.module if hasattr(model, 'module') else model
+                paper_proj = m_curr.encode_paper(input_ids, attention_mask)
+                logits = m_curr.forward_logits(paper_proj, j_proj_tensor)
                 loss = criterion(logits, labels)
 
             scaler.scale(loss).backward()
@@ -290,10 +310,11 @@ def train_overnight(
 
         # Validation Loop
         print(f"\n[Validation] Evaluating Epoch {epoch} on Validation Set...")
-        m_eval.eval()
         val_hits_1, val_hits_10, val_total = 0, 0, 0
+        j_proj_val = compute_journal_proj_tensor(model)
+        m_eval = model.module if hasattr(model, 'module') else model
+        m_eval.eval()
         with torch.no_grad():
-            j_proj_val = m_eval.encode_journal(j_input_ids, j_attn_mask)
             for batch in val_loader:
                 input_ids = batch['input_ids'].to(device)
                 attention_mask = batch['attention_mask'].to(device)
