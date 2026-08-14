@@ -1,9 +1,20 @@
 # Master Pipeline Hợp Nhất: DTAR-Slim v2.1 (Complete & Production-Grade Architecture)
 
-> **Cập nhật v2.1**: Tích hợp hoàn chỉnh **3 Giải pháp Khắc phục Hạn chế Kỹ thuật**:
-> 1. **Dynamic Adaptive Permutation**: Hoán vị động dựa trên chỉ số Kendall's $\tau$ (chạy 2 lần mặc định, tự kích hoạt Lần 3 nếu $\tau < 0.7$).
-> 2. **Synthetic-Trained SetFit Classifier**: Classifier Desk Reject siêu nhẹ (~100MB, 5ms CPU) được train bằng 3,000 câu paraphrase sinh bởi LLM từ `journal_full_info.csv`.
-> 3. **Calibrated Faithfulness Check**: Ngưỡng $T^*$ được hiệu chỉnh thực nghiệm bằng đường cong F1-Score trên 100 mẫu validation.
+## 📌 Bối Cảnh & Định Nghĩa Bài Toán (Problem Formulation)
+
+### 1. Bài toán Gợi ý Tạp chí Y học (Medical Journal Recommendation)
+- **Đầu vào (Input)**: Bản thảo bài báo nghiên cứu y sinh học gồm **Tiêu đề (Title)**, **Tóm tắt (Abstract)** và **Từ khóa (Keywords)**.
+- **Đầu ra (Output)**: Xếp hạng **Top 5 Tạp chí y học tối ưu nhất** trong không gian 1,406 tạp chí PubMed/SCImago kèm **Giải thích lý do y khoa (Reasoning Trace)** và **Độ an toàn xuất bản (Integrity Status)**.
+
+### 2. Các Thách Thức Cốt Lõi Trong Thực Tế (Core Challenges)
+1. **Không gian nhãn lớn (1,406 tạp chí chuyên sâu)**: Cần bộ truy vấn siêu tốc (Latency < 50ms) có khả năng lọc ứng viên chính xác (Recall@50 > 95%).
+2. **Rủi ro Bị Từ chối Sơ khảo (Desk Reject)**: Các tạp chí có chính sách cấm nghiêm ngặt (ví dụ: Tạp chí lâm sàng cấm *Case Reports* hoặc *Cell-line thuần*).
+3. **Tạp chí Săn mồi & Bị Gạch tên (Predatory / Delisted Journals)**: Cần cơ chế kiểm định an toàn (DOAJ / PubMed Active Index) bảo vệ tác giả.
+4. **Nhu cầu Giải thích Tường minh (Interpretability)**: Tác giả y khoa không chỉ cần điểm số xác suất vô hồn mà cần biết rõ vì sao tạp chí Top 1 phù hợp nhất với cấu trúc **PICO** (Population, Intervention, Comparison, Outcome) và **Loại hình nghiên cứu (Study Type)** của họ.
+
+### 3. Tập Dữ Liệu Thực Nghiệm (MedPRS Benchmark)
+- **Papers**: 842,424 bài báo huấn luyện (Train), 120,346 bài kiểm tra (Val), 100,000 bài thử nghiệm (Test).
+- **Journals**: 1,406 tạp chí y sinh PubMed với 22 trường thông tin: Tên tạp chí, Aims & Scope, Phân hạng SCImago (Q1–Q4), SJR Index, H-Index, và 9 nhóm ngành y khoa chuyên biệt.
 
 ---
 
