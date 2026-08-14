@@ -26,8 +26,8 @@
 ├── stage3_dear_reranker.py    # Stage 3: DeAR Listwise Reranker & Reasoning Trace
 ├── evaluator.py               # Automated evaluation metrics (Recall, Acc@K, NDCG, Kendall Tau)
 ├── run_kaggle_pipeline.py     # Main end-to-end execution script
-├── Pipeline_Paper_To_Journal_Y_Te_v2.md  # Master v2.1 Pipeline Specification
-├── DTAR_Pipeline_MedPRS.md    # DTAR Architecture Specification
+├── train_simcprs.py           # Multi-GPU training & checkpoint resume engine
+├── Pipeline_Paper_To_Journal_Y_Te_v2.md  # Master v2.1 Pipeline Architecture Specification
 ├── journal_full_info.csv      # 1,406 PubMed journal metadata dataset (22 columns)
 └── README.md
 ```
