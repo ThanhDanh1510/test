@@ -42,22 +42,28 @@ class Qwen25Reranker:
         candidates_text = ""
         for idx, c in enumerate(candidate_list):
             cats = c.get('categories', [])
-            cats_str = ', '.join([str(x) for x in (cats[:2] if isinstance(cats, list) else [cats])])
+            cats_str = ', '.join([str(x) for x in (cats[:3] if isinstance(cats, list) else [cats])])
+            aims_text = str(c.get('aims', '')).strip()
+            scope_text = str(c.get('scope', '')).strip()
+            full_scope = f"{aims_text} {scope_text}".strip() if scope_text and scope_text != aims_text else aims_text
+            
             candidates_text += f"\n[{idx}] Journal: {c['title']}\n"
             candidates_text += f"    - Quartile: {c.get('best_quartile', 'Q1')} | SJR: {c.get('sjr_index', 1.0)}\n"
             candidates_text += f"    - Categories: {cats_str}\n"
-            candidates_text += f"    - Aims & Scope: {str(c.get('aims', ''))[:150]}...\n"
+            candidates_text += f"    - Aims & Scope: {full_scope[:220]}...\n"
 
-        system_prompt = "You are an expert biomedical journal reviewer (DeAR Reasoning Agent). Evaluate candidate journals against the paper's PICO and output the best ranking."
-        user_prompt = f"""[PAPER]
+        system_prompt = "You are an expert biomedical journal reviewer (DeAR Reasoning Agent). Evaluate candidate journals against the paper's PICO, study design, and clinical scope to output the best ranking."
+        user_prompt = f"""[PAPER METADATA]
 Title: {paper_object['title']}
 Study Type: {paper_object.get('study_type', 'Research Paper')}
-Abstract: {paper_object.get('abstract', '')[:300]}...
+PICO: {paper_object.get('pico_summary', 'N/A')}
+Keywords: {paper_object.get('keywords', 'N/A')}
+Abstract: {paper_object.get('abstract', '')[:400]}...
 
-[CANDIDATE JOURNALS]{candidates_text}
+[CANDIDATE JOURNALS POOL]{candidates_text}
 
 [INSTRUCTION]
-Analyze which journals best fit the paper. End your output with:
+Analyze which candidate journals best match the paper's specific clinical scope, PICO, and study design. End your output with:
 Final Ranking: [best_idx] > [second_idx] > [third_idx]"""
 
         messages = [
@@ -86,21 +92,31 @@ class Stage3DeARReranker:
         candidates_text = ""
         for idx, c in enumerate(candidate_list, 1):
             cats = c.get('categories', [])
-            cats_str = ', '.join([str(x) for x in (cats[:2] if isinstance(cats, list) else [cats])])
+            cats_str = ', '.join([str(x) for x in (cats[:3] if isinstance(cats, list) else [cats])])
+            aims_text = str(c.get('aims', '')).strip()
+            scope_text = str(c.get('scope', '')).strip()
+            full_scope = f"{aims_text} {scope_text}".strip() if scope_text and scope_text != aims_text else aims_text
+
             candidates_text += f"\nCandidate [{idx}]: {c['title']}\n"
-            candidates_text += f"  - Quartile: {c['best_quartile']} | SJR: {c['sjr_index']}\n"
+            candidates_text += f"  - Quartile: {c.get('best_quartile', 'Q1')} | SJR: {c.get('sjr_index', 1.0)}\n"
             candidates_text += f"  - Categories: {cats_str}\n"
-            candidates_text += f"  - Aims & Scope: {c.get('aims', '')[:200]}...\n"
+            candidates_text += f"  - Aims & Scope: {full_scope[:220]}...\n"
 
         prompt = f"""[TASK]
 You are an expert biomedical journal submission recommender (DeAR Reasoning Agent). 
-Evaluate the candidate journals against the paper's PICO and Study Type.
+Evaluate the candidate journals against the paper's PICO, study design, and clinical scope.
 
 [PAPER METADATA]
 Title: {paper_object['title']}
-Study Type: {paper_object['study_type']}
+Study Type: {paper_object.get('study_type', 'Research Paper')}
+PICO: {paper_object.get('pico_summary', 'N/A')}
+Keywords: {paper_object.get('keywords', 'N/A')}
+Abstract: {paper_object.get('abstract', '')[:400]}...
 
-[CANDIDATE JOURNALS POOL]{candidates_text}"""
+[CANDIDATE JOURNALS POOL]{candidates_text}
+
+[INSTRUCTIONS]
+Provide concise step-by-step reasoning comparing candidate scopes against the paper's PICO, then output the final ranked order from 1 to {len(candidate_list)}."""
         return prompt
 
     def rerank_and_explain(self, paper_object, candidate_list):
