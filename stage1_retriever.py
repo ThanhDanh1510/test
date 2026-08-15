@@ -171,12 +171,21 @@ class Stage1Retriever:
         self.journal_proj_tensor = torch.stack(j_embeddings).to(self.device)
         print(f"[Stage1Retriever] Successfully pre-computed {self.journal_proj_tensor.size(0)} journal projected embeddings tensor of shape {self.journal_proj_tensor.shape}.")
 
-    def retrieve(self, paper_object, top_k=50):
-        title = paper_object.get('title', '')
-        abstract = paper_object.get('abstract', '')
-        p_text = f"{title} {abstract}".strip()
-        if not p_text:
-            p_text = paper_object.get('keywords', 'Medical research paper')
+    def retrieve(self, paper_input, abstract=None, top_k=50):
+        """
+        Retrieves Top K candidate journals.
+        Accepts either paper_dict or (title, abstract, top_k).
+        """
+        if isinstance(paper_input, dict):
+            title = paper_input.get('title', '')
+            abstract_text = paper_input.get('abstract', '')
+            p_text = f"{title} {abstract_text}".strip()
+            if not p_text:
+                p_text = paper_input.get('keywords', 'Medical research paper')
+        else:
+            title = str(paper_input)
+            abstract_text = str(abstract) if abstract else ""
+            p_text = f"{title} {abstract_text}".strip()
 
         if HAS_TORCH:
             inputs = self.tokenizer(p_text, max_length=512, padding="max_length", truncation=True, return_tensors="pt").to(self.device)

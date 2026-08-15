@@ -74,7 +74,7 @@ class DTARv3Pipeline:
         parsed_paper = self.stage0.parse_paper(title, abstract, keywords)
 
         # STAGE 1: Dense Retrieval (Top 50 Candidates)
-        stage1_top50 = self.stage1.retrieve(title, abstract, top_k=50)
+        stage1_top50 = self.stage1.retrieve(paper_dict, top_k=50)
 
         # STAGE 2: Risk-Aware Policy Gate (Top 20 Candidates)
         stage2_top20 = self.stage2.process_candidates(stage1_top50, parsed_paper)
