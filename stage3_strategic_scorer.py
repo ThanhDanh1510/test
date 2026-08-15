@@ -8,13 +8,13 @@ class Stage3StrategicScorer:
     """
     def __init__(self, default_preferences=None):
         self.default_preferences = default_preferences or {
-            "min_quartile": "Q1",
-            "fit_weight": 0.35,
-            "policy_weight": 0.20,
-            "quality_weight": 0.20,
-            "preference_weight": 0.10,
-            "integrity_weight": 0.05,
-            "risk_weight": 0.10
+            "min_quartile": "Q2",
+            "fit_weight": 0.65,        # Trọng số chi phối từ mô hình BioBERT SimCPSR đã fine-tune
+            "policy_weight": 0.15,     # Tương thích chính sách xuất bản
+            "quality_weight": 0.10,    # Chất lượng / Uy tín tạp chí
+            "preference_weight": 0.05, # Kỳ vọng của tác giả
+            "integrity_weight": 0.05,  # An toàn xuất bản
+            "risk_weight": 0.05        # Phạt rủi ro xung đột
         }
 
     def compute_quality_proxy(self, journal_candidate):
@@ -29,7 +29,7 @@ class Stage3StrategicScorer:
             sjr = float(journal_candidate.get('sjr_index', 1.0))
         except (ValueError, TypeError):
             sjr = 1.0
-        # Sigmoid-normalized SJR proxy (SJR ~ 2.0 -> 0.85, SJR ~ 5.0 -> 0.98)
+        # Sigmoid-normalized SJR proxy
         norm_sjr = min(1.0, float(1.0 / (1.0 + np.exp(-0.8 * sjr + 1.2))))
 
         try:
@@ -53,27 +53,27 @@ class Stage3StrategicScorer:
         if q_order.get(cand_q, 1) >= q_order.get(min_quartile, 2):
             return 1.0
         else:
-            return 0.4
+            return 0.5
 
     def score_candidates(self, paper_object, candidate_list, user_preferences=None):
         """
         Calculates full strategic utility for all candidates.
         """
         pref = user_preferences or self.default_preferences
-        w_fit = pref.get("fit_weight", 0.35)
-        w_pol = pref.get("policy_weight", 0.20)
-        w_qual = pref.get("quality_weight", 0.20)
-        w_pref = pref.get("preference_weight", 0.10)
+        w_fit = pref.get("fit_weight", 0.65)
+        w_pol = pref.get("policy_weight", 0.15)
+        w_qual = pref.get("quality_weight", 0.10)
+        w_pref = pref.get("preference_weight", 0.05)
         w_int = pref.get("integrity_weight", 0.05)
-        w_risk = pref.get("risk_weight", 0.10)
+        w_risk = pref.get("risk_weight", 0.05)
 
         scored_candidates = []
 
         for c in candidate_list:
-            # 1. Semantic Fit F
+            # 1. Semantic Fit F (Preserving fine-tuned logit ranking)
             dense_sim = c.get('normalized_dense_sim', 0.85)
             domain_score = c.get('domain_score', 0.8)
-            fit_f = round(0.75 * dense_sim + 0.25 * domain_score, 3)
+            fit_f = round(0.90 * dense_sim + 0.10 * domain_score, 3)
 
             # 2. Policy Compatibility P
             pol_p = round(c.get('policy_compatibility', 1.0), 3)
