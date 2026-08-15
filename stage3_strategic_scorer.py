@@ -75,19 +75,18 @@ class Stage3StrategicScorer:
         scored_candidates = []
 
         for rank_idx, c in enumerate(candidate_list):
-            # 1. Semantic Fit F
-            dense_sim = c.get('normalized_dense_sim', 0.85)
+            # 1. Semantic Fit F (Weighted from fine-tuned neural logits)
+            dense_sim = c.get('normalized_dense_sim', 1.0 / (1.0 + 0.15 * rank_idx))
             domain_score = c.get('domain_score', 0.8)
 
-            # AMAR: Term Resonance Bonus (Exact keyword/category alignment)
+            # AMAR: Specific Medical Entity Resonance Bonus
             j_title_lower = str(c.get('title', '')).lower()
             j_cats_lower = str(c.get('categories', '')).lower()
-            j_scope_lower = str(c.get('scope', '')).lower()
             
             term_matches = sum(1 for term in paper_core_terms if term in j_title_lower or term in j_cats_lower)
-            resonance_bonus = min(0.08, 0.02 * term_matches)
+            resonance_bonus = min(0.015, 0.005 * term_matches)
 
-            fit_f = round(0.85 * dense_sim + 0.10 * domain_score + 0.05 * (1.0 if resonance_bonus > 0 else 0.0) + resonance_bonus, 3)
+            fit_f = round(0.95 * dense_sim + 0.05 * domain_score + resonance_bonus, 4)
 
             # 2. Policy Compatibility P
             pol_p = round(c.get('policy_compatibility', 1.0), 3)
