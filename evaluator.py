@@ -76,9 +76,10 @@ def evaluate_pipeline(pipeline, test_papers_df, top_k_list=[1, 3, 5, 10]):
             else:
                 ndcg_scores[k].append(0.0)
 
-        # 3. Kendall's Tau Tracking
+        # 3. Uncertainty & Risk Tracking
         if len(res_output) > 0:
-            tau_correlations.append(res_output[0]['confidence_flags']['kendall_tau'])
+            u_score = res_output[0].get('confidence_flags', {}).get('uncertainty_score', 0.05)
+            tau_correlations.append(u_score)
 
     total_time = time.time() - start_eval_time
     total_samples = len(test_papers_df)
@@ -90,23 +91,23 @@ def evaluate_pipeline(pipeline, test_papers_df, top_k_list=[1, 3, 5, 10]):
         "stage1_recall_50": round(float(np.mean(stage1_recalls_50)), 4),
         "accuracy": {f"Top-{k}": round(acc_hits[k] / total_samples, 4) for k in top_k_list},
         "ndcg": {f"NDCG@{k}": round(float(np.mean(ndcg_scores[k])), 4) for k in [5, 10]},
-        "kendall_tau_mean": round(float(np.mean(tau_correlations)), 4),
+        "mean_uncertainty": round(float(np.mean(tau_correlations)), 4),
         "latency_ms": {
             "p50": round(float(np.percentile(latencies, 50)), 2),
             "p95": round(float(np.percentile(latencies, 95)), 2)
         }
     }
 
-    print("\n---------------- EVALUATION RESULTS (DTAR-Slim v2.1) ----------------")
+    print("\n---------------- EVALUATION RESULTS (DTAR v3.0) ----------------")
     print(f"Evaluated Samples  : {report['samples_evaluated']}")
     print(f"Stage 1 Recall@50  : {report['stage1_recall_50'] * 100:.2f}%")
     for k_str, acc_val in report['accuracy'].items():
         print(f"Accuracy ({k_str})    : {acc_val * 100:.2f}%")
     for k_str, ndcg_val in report['ndcg'].items():
         print(f"{k_str}              : {ndcg_val:.4f}")
-    print(f"Kendall's Tau Mean : {report['kendall_tau_mean']}")
+    print(f"Mean Uncertainty   : {report['mean_uncertainty']}")
     print(f"Latency P50        : {report['latency_ms']['p50']} ms")
     print(f"Latency P95        : {report['latency_ms']['p95']} ms")
-    print("---------------------------------------------------------------------\n")
+    print("----------------------------------------------------------------\n")
 
     return report

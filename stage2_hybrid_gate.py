@@ -1,137 +1,152 @@
-import re
+from stage0_5_policy_encoder import JournalPolicyEncoder
 
-class SetFitClassifierMock:
+class Stage2RiskGate:
     """
-    Mock SetFit Classifier for Desk Reject detection.
-    Pre-trained on 3,000 synthetic paraphrases of journal policy rejection statements.
-    Trained on 5ms CPU execution time.
+    Stage 2: Risk-Aware Policy Gate (DTAR v3.0)
+    1. Hard Integrity Gate: Drop predatory/delisted journals.
+    2. Policy Conflict Score R_policy(x,j): Quantifies policy conflict risk [0.0 - 1.0].
+    3. Ambiguity Bucketing (ALLOW, CONFLICT, AMBIGUOUS).
+    4. Soft domain matching & user preference constraints.
     """
     def __init__(self):
-        self.rejection_patterns = [
-            r'do not accept case reports',
-            r'case reports are not considered',
-            r'no case reports',
-            r'studies solely based on cell lines will not be considered',
-            r'do not publish original animal',
-            r'cell culture studies alone are out of scope'
-        ]
-
-    def predict_rejection(self, aims_scope_text, paper_flags):
-        text_lower = aims_scope_text.lower()
+        self.policy_encoder = JournalPolicyEncoder()
         
-        # Check Case Report Exclusion
-        if paper_flags.get('is_case_report', False):
-            if any(re.search(pat, text_lower) for pat in [r'case report', r'case series', r'clinical image']):
-                if any(neg in text_lower for neg in ['not accept', 'not consider', 'do not publish', 'no case']):
-                    return True, "Excluded by Journal Policy: Case Reports Not Accepted"
-
-        # Check Cell Line Exclusion
-        if paper_flags.get('is_cell_line_only', False):
-            if any(re.search(pat, text_lower) for pat in [r'cell line', r'cell culture', r'in vitro']):
-                if any(neg in text_lower for neg in ['solely', 'not consider', 'will not be', 'out of scope']):
-                    return True, "Excluded by Journal Policy: Pure Cell Line Studies Not Accepted"
-
-        # Check Animal Exclusion
-        if paper_flags.get('is_animal_only', False):
-            if any(re.search(pat, text_lower) for pat in [r'animal', r'in vivo animal', r'rat', r'mouse']):
-                if any(neg in text_lower for neg in ['do not publish', 'not consider', 'unless']):
-                    return True, "Excluded by Journal Policy: Pure Animal Studies Not Accepted"
-
-        return False, "PASS"
-
-class Stage2HybridGate:
-    def __init__(self):
-        self.classifier = SetFitClassifierMock()
-        
-        # Simulated list of delisted / predatory journals for Integrity Gate
+        # Predatory / Delisted blacklist for Integrity Hard Gate
         self.delisted_journals = set([
             "journal of predatory medicine",
-            "fake biomedical research"
+            "fake biomedical research",
+            "open access medical fraud journal"
         ])
+
+    def evaluate_policy_conflict(self, paper_object, journal_candidate):
+        """
+        Computes R_policy(x,j) = sum_k w_k * c_k(x,j) and classifies into ALLOW/CONFLICT/AMBIGUOUS
+        """
+        policy = self.policy_encoder.extract_journal_policy(journal_candidate)
+        excluded_types = policy.get("excluded_types", [])
+        signals = paper_object.get("paper_signals", {})
+
+        conflict_score = 0.0
+        conflict_reasons = []
+
+        # 1. Case Report Exclusion check
+        if "case_report" in excluded_types:
+            case_sig = signals.get("is_case_report", 0.0)
+            if case_sig >= 0.5:
+                conflict_score += 0.85 * case_sig
+                conflict_reasons.append("Journal policy strictly excludes Case Reports.")
+            elif case_sig >= 0.2:
+                conflict_score += 0.40 * case_sig
+                conflict_reasons.append("Potential case series signal conflicts with journal exclusion policy.")
+
+        # 2. Cell Line Exclusion check
+        if "cell_line_only" in excluded_types:
+            cell_sig = signals.get("is_cell_line", 0.0)
+            if cell_sig >= 0.5:
+                conflict_score += 0.75 * cell_sig
+                conflict_reasons.append("Journal excludes in vitro cell culture studies without clinical cohort.")
+            elif cell_sig >= 0.2:
+                conflict_score += 0.35 * cell_sig
+
+        # 3. Animal Exclusion check
+        if "animal_only" in excluded_types:
+            animal_sig = signals.get("is_animal_only", 0.0)
+            if animal_sig >= 0.5:
+                conflict_score += 0.65 * animal_sig
+                conflict_reasons.append("Journal excludes pure preclinical animal studies.")
+
+        # Bound R_policy in [0.0, 1.0]
+        r_policy = min(1.0, round(conflict_score, 3))
+
+        # Categorize bucket
+        if r_policy >= 0.65:
+            bucket = "CONFLICT"
+        elif r_policy >= 0.25:
+            bucket = "AMBIGUOUS"
+        else:
+            bucket = "ALLOW"
+
+        return r_policy, bucket, conflict_reasons, policy.get("evidence_spans", [])
 
     def process_candidates(self, candidate_list, paper_object, user_strict_mode=False):
         """
-        Executes Stage 2 Python Hybrid Gate:
-        1. HARD FILTER: Integrity Gate (Predatory / Delisted Check)
-        2. HARD FILTER: Desk Reject Engine (SetFit + Regex)
-        3. SOFT SCORING: Soft Domain Match Score calculation & bonus addition
-        4. SOFT SCORING: User Preference Warning (Quartile / SJR)
-        
-        N = 50 -> N_pruned = 15 - 20 candidates
+        Processes candidate pool (Top 50 -> Top 15 - 20) with risk scoring.
         """
-        pruned_candidates = []
+        filtered_candidates = []
 
         for candidate in candidate_list:
-            j_title = candidate['title']
-            aims_scope = f"{candidate.get('aims', '')} {candidate.get('scope', '')}"
+            j_title = str(candidate.get('title', '')).strip()
 
-            # --- 1. HARD FILTER: Journal Integrity Gate ---
+            # --- 1. HARD INTEGRITY GATE ---
             if j_title.lower() in self.delisted_journals:
-                continue # Hard reject immediately
+                continue
 
-            # --- 2. HARD FILTER: Desk Reject Engine ---
-            is_rejected, reject_reason = self.classifier.predict_rejection(aims_scope, paper_object)
-            if is_rejected:
-                continue # Hard reject immediately
+            # --- 2. POLICY CONFLICT RISK SCORING ---
+            r_policy, bucket, conflict_reasons, evidence_spans = self.evaluate_policy_conflict(paper_object, candidate)
 
-            # --- 3. SOFT SCORING: Domain Match Score ---
-            paper_domains = paper_object.get('domain_scores', {})
+            # In strict mode, drop high CONFLICT candidates; in standard mode, retain with risk penalty
+            if user_strict_mode and bucket == "CONFLICT":
+                continue
+
+            # --- 3. SOFT DOMAIN MATCH SCORING ---
+            paper_domains = paper_object.get('domains', {})
             journal_domains = candidate.get('domain_flags', {})
-            
-            # Compute Dot Product / Cosine overlap for soft domain score
+
             domain_score = 0.0
             total_weight = 0.0
             for d_name, p_score in paper_domains.items():
                 j_flag = journal_domains.get(d_name, 0.0)
                 domain_score += p_score * j_flag
                 total_weight += p_score
+
+            norm_domain_score = round(domain_score / max(1.0, total_weight), 3)
+
+            # --- 4. PRE-STRATEGIC COMPOSITE SCORE ---
+            dense_sim = candidate.get('dense_similarity_score', 0.8)
+            policy_compat = max(0.0, 1.0 - r_policy)
             
-            normalized_domain_score = round(domain_score / max(1.0, total_weight), 3)
+            # Initial screening score for Top 20 filtering
+            screening_score = (0.50 * dense_sim) + (0.25 * norm_domain_score) + (0.25 * policy_compat)
 
-            # Combined hybrid score (Dense Retrieval + Soft Domain Bonus)
-            hybrid_score = candidate['dense_similarity_score'] + (0.15 * normalized_domain_score)
+            cand_copy = dict(candidate)
+            cand_copy['domain_score'] = norm_domain_score
+            cand_copy['policy_risk'] = r_policy
+            cand_copy['policy_bucket'] = bucket
+            cand_copy['policy_compatibility'] = policy_compat
+            cand_copy['conflict_reasons'] = conflict_reasons
+            cand_copy['evidence_spans'] = evidence_spans
+            cand_copy['screening_score'] = screening_score
+            cand_copy['integrity_status'] = "PASS"
 
-            # --- 4. SOFT SCORING: User Preference Warning ---
-            quartile_warning = False
-            if user_strict_mode and candidate.get('best_quartile') in ['Q3', 'Q4']:
-                continue # Reject in strict mode
-            elif candidate.get('best_quartile') in ['Q3', 'Q4']:
-                quartile_warning = True
+            filtered_candidates.append(cand_copy)
 
-            candidate_copy = dict(candidate)
-            candidate_copy['domain_score'] = normalized_domain_score
-            candidate_copy['hybrid_score'] = hybrid_score
-            candidate_copy['quartile_warning'] = quartile_warning
-            candidate_copy['integrity_status'] = "PASS"
-            
-            pruned_candidates.append(candidate_copy)
-
-        # Sort candidates by hybrid_score descending and select Top 15 - 20
-        pruned_candidates.sort(key=lambda x: x['hybrid_score'], reverse=True)
-        return pruned_candidates[:20]
+        # Sort and select Top 20 candidates
+        filtered_candidates.sort(key=lambda x: x['screening_score'], reverse=True)
+        return filtered_candidates[:20]
 
 if __name__ == "__main__":
-    gate = Stage2HybridGate()
-    sample_candidates = [
+    gate = Stage2RiskGate()
+    mock_candidates = [
         {
-            "title": "Therapeutic Advances in Neurological Disorders",
-            "aims": "We do not accept case reports in neurology.",
-            "scope": "Clinical neurology studies.",
-            "dense_similarity_score": 0.85,
+            "title": "Neurology Clinical Cases",
+            "dense_similarity_score": 0.89,
             "best_quartile": "Q1",
-            "domain_flags": {"Medicine": 1.0, "Neuroscience": 1.0}
+            "aims": "We publish case reports in neurology.",
+            "scope": "Clinical neurology."
         },
         {
-            "title": "Journal of Clinical Endocrinology",
-            "aims": "Publishing original clinical research.",
-            "scope": "Diabetes and metabolism.",
-            "dense_similarity_score": 0.88,
+            "title": "Lancet Neurology",
+            "dense_similarity_score": 0.92,
             "best_quartile": "Q1",
-            "domain_flags": {"Medicine": 1.0, "Pharmacology, Toxicology and Pharmaceutics": 1.0}
+            "aims": "We do not accept case reports.",
+            "scope": "Major randomized clinical trials only."
         }
     ]
-    
-    # Test case 1: Case Report Paper
-    paper_case_report = {"is_case_report": True, "domain_scores": {"Medicine": 1.0, "Neuroscience": 0.8}}
-    out1 = gate.process_candidates(sample_candidates, paper_case_report)
-    print("Pruned Candidates for Case Report (Expect 1 candidate surviving):", len(out1))
+    mock_paper = {
+        "study_type": "Case Report",
+        "paper_signals": {"is_case_report": 0.9, "is_clinical_trial": 0.05},
+        "domains": {"Medicine": 0.9, "Neuroscience": 0.9}
+    }
+    res = gate.process_candidates(mock_candidates, mock_paper)
+    for r in res:
+        print(f"Journal: {r['title']} | Risk: {r['policy_risk']} | Bucket: {r['policy_bucket']}")
