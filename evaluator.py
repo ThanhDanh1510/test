@@ -45,15 +45,25 @@ def evaluate_pipeline(pipeline, test_papers_df, top_k_list=[1, 3, 5, 10]):
         is_in_stage1 = (target_label in s1_ids) or (target_journal_title.lower().strip() in s1_titles)
         stage1_recalls_50.append(1.0 if is_in_stage1 else 0.0)
 
-        # 2. Accuracy@K & NDCG@K
+        # 2. Accuracy@K, Acceptable Sister Set Accuracy & NDCG@K
         hit_rank = None
+        acceptable_hit_rank = None
+        target_cats = pipeline.loader.label_to_journal.get(target_label, {}).get('categories', [])
+        target_cats_set = set([str(c).lower().strip() for c in target_cats])
+
         for rank, item in enumerate(res_output, 1):
             item_title = item.get('journal_title', '').lower().strip()
             item_id = pipeline.loader.journal_to_label.get(item_title, -1)
             
-            if item_id == target_label or item_title == target_journal_title.lower().strip():
+            # Strict exact match
+            if (item_id == target_label or item_title == target_journal_title) and hit_rank is None:
                 hit_rank = rank
-                break
+            
+            # Acceptable Sister Set match (same major category and Q1 quartile)
+            item_cats = item.get('categories', [])
+            item_cats_set = set([str(c).lower().strip() for c in item_cats])
+            if (item_id == target_label or bool(target_cats_set.intersection(item_cats_set))) and item.get('best_quartile') == 'Q1' and acceptable_hit_rank is None:
+                acceptable_hit_rank = rank
 
         for k in top_k_list:
             if hit_rank and hit_rank <= k:
@@ -87,7 +97,7 @@ def evaluate_pipeline(pipeline, test_papers_df, top_k_list=[1, 3, 5, 10]):
         }
     }
 
-    print("\n---------------- EVALUATION RESULTS ----------------")
+    print("\n---------------- EVALUATION RESULTS (DTAR-Slim v2.1) ----------------")
     print(f"Evaluated Samples  : {report['samples_evaluated']}")
     print(f"Stage 1 Recall@50  : {report['stage1_recall_50'] * 100:.2f}%")
     for k_str, acc_val in report['accuracy'].items():
@@ -97,6 +107,6 @@ def evaluate_pipeline(pipeline, test_papers_df, top_k_list=[1, 3, 5, 10]):
     print(f"Kendall's Tau Mean : {report['kendall_tau_mean']}")
     print(f"Latency P50        : {report['latency_ms']['p50']} ms")
     print(f"Latency P95        : {report['latency_ms']['p95']} ms")
-    print("----------------------------------------------------\n")
+    print("---------------------------------------------------------------------\n")
 
     return report
