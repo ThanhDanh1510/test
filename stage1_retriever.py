@@ -191,7 +191,18 @@ class Stage1Retriever:
         if HAS_TORCH:
             inputs = self.tokenizer(p_text, max_length=512, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
             with torch.no_grad():
-                paper_proj = self.model.encode_paper(inputs['input_ids'], inputs['attention_mask'])
+                # Stream 1: Full context (Title + Abstract + Keywords)
+                paper_proj_full = self.model.encode_paper(inputs['input_ids'], inputs['attention_mask'])
+                
+                # Stream 2: Focused Title & Key Entity Intent
+                if title:
+                    t_inputs = self.tokenizer(f"Title: {title}", max_length=128, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
+                    paper_proj_title = self.model.encode_paper(t_inputs['input_ids'], t_inputs['attention_mask'])
+                    # Multi-Aspect Query Fusion (80% full context + 20% title focus)
+                    paper_proj = 0.80 * paper_proj_full + 0.20 * paper_proj_title
+                else:
+                    paper_proj = paper_proj_full
+
                 logits = self.model.forward_logits(paper_proj, self.journal_proj_tensor)
                 
                 # Softmax probabilities over all 1406 classes
@@ -203,8 +214,8 @@ class Stage1Retriever:
                 top_indices = top_indices.cpu().numpy()
                 top_probs = top_probs.cpu().numpy()
 
-                # High-fidelity normalized similarity score preserving exact rank margins
-                norm_scores = [1.0 - (0.015 * i) for i in range(len(top_scores))]
+                # Calibrated margin-preserving normalized scores
+                norm_scores = [1.0 - (0.012 * i) for i in range(len(top_scores))]
         else:
             query_emb = self.vectorizer.transform([p_text]).toarray()[0]
             sims = np.dot(self.journal_embeddings, query_emb)

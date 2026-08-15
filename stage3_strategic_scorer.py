@@ -1,3 +1,4 @@
+import re
 import numpy as np
 
 class Stage3StrategicScorer:
@@ -57,7 +58,7 @@ class Stage3StrategicScorer:
 
     def score_candidates(self, paper_object, candidate_list, user_preferences=None):
         """
-        Calculates full strategic utility for all candidates.
+        Calculates full strategic utility for all candidates with Adaptive Margin-Aware Disambiguation (AMAR).
         """
         pref = user_preferences or self.default_preferences
         w_fit = pref.get("fit_weight", 0.65)
@@ -67,13 +68,26 @@ class Stage3StrategicScorer:
         w_int = pref.get("integrity_weight", 0.05)
         w_risk = pref.get("risk_weight", 0.05)
 
+        title_words = set(re.findall(r'\b\w{4,}\b', str(paper_object.get('title', '')).lower()))
+        mesh_words = set(re.findall(r'\b\w{4,}\b', str(paper_object.get('keywords', '')).lower()))
+        paper_core_terms = title_words.union(mesh_words)
+
         scored_candidates = []
 
-        for c in candidate_list:
-            # 1. Semantic Fit F (Preserving fine-tuned logit ranking)
+        for rank_idx, c in enumerate(candidate_list):
+            # 1. Semantic Fit F
             dense_sim = c.get('normalized_dense_sim', 0.85)
             domain_score = c.get('domain_score', 0.8)
-            fit_f = round(0.90 * dense_sim + 0.10 * domain_score, 3)
+
+            # AMAR: Term Resonance Bonus (Exact keyword/category alignment)
+            j_title_lower = str(c.get('title', '')).lower()
+            j_cats_lower = str(c.get('categories', '')).lower()
+            j_scope_lower = str(c.get('scope', '')).lower()
+            
+            term_matches = sum(1 for term in paper_core_terms if term in j_title_lower or term in j_cats_lower)
+            resonance_bonus = min(0.08, 0.02 * term_matches)
+
+            fit_f = round(0.85 * dense_sim + 0.10 * domain_score + 0.05 * (1.0 if resonance_bonus > 0 else 0.0) + resonance_bonus, 3)
 
             # 2. Policy Compatibility P
             pol_p = round(c.get('policy_compatibility', 1.0), 3)
@@ -99,7 +113,7 @@ class Stage3StrategicScorer:
                 w_pref * pref_u -
                 w_risk * risk_r
             )
-            strategic_utility = round(max(0.0, min(1.0, strategic_utility)), 3)
+            strategic_utility = round(max(0.0, min(1.0, strategic_utility)), 4)
 
             cand_entry = dict(c)
             cand_entry['dimensions'] = {
