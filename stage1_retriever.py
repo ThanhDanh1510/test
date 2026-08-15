@@ -195,19 +195,27 @@ class Stage1Retriever:
                 top_scores, top_indices = torch.topk(logits[0], k=min(top_k, logits.size(1)))
                 top_scores = top_scores.cpu().numpy()
                 top_indices = top_indices.cpu().numpy()
+
+                # Min-Max Normalization within Top-K pool into [0.5, 1.0]
+                s_min, s_max = float(top_scores.min()), float(top_scores.max())
+                s_range = max(1e-5, s_max - s_min)
+                norm_scores = 0.5 + 0.5 * (top_scores - s_min) / s_range
         else:
             query_emb = self.vectorizer.transform([p_text]).toarray()[0]
             sims = np.dot(self.journal_embeddings, query_emb)
             top_indices = np.argsort(sims)[::-1][:top_k]
             top_scores = sims[top_indices]
+            norm_scores = top_scores
         
         results = []
-        for rank, (score, idx) in enumerate(zip(top_scores, top_indices)):
+        for rank, (score, norm_s, idx) in enumerate(zip(top_scores, norm_scores, top_indices)):
             if idx < len(self.journal_df):
                 j_row = self.journal_df.iloc[idx].to_dict()
             else:
                 j_row = self.journal_df.iloc[idx % len(self.journal_df)].to_dict()
             j_row['dense_similarity_score'] = float(score)
+            j_row['normalized_dense_sim'] = round(float(norm_s), 4)
+            j_row['retriever_rank'] = rank + 1
             results.append(j_row)
 
         return results

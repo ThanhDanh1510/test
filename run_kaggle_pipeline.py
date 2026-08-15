@@ -43,9 +43,9 @@ class DTARv3Pipeline:
 
     def _auto_find_checkpoint(self, data_dir):
         candidates = [
-            "/kaggle/input/datasets/tintngc/medprs-dataset/Epoch_02_SIMCPRS_dmis-lab_biobert-v1_1_CL.pth",
             "/kaggle/working/best_simcprs_checkpoint.pth",
             "/kaggle/working/latest_step_checkpoint.pth",
+            "/kaggle/input/datasets/tintngc/medprs-dataset/Epoch_02_SIMCPRS_dmis-lab_biobert-v1_1_CL.pth",
             os.path.join(data_dir, "Epoch_02_SIMCPRS_dmis-lab_biobert-v1_1_CL.pth")
         ]
         for c in candidates:

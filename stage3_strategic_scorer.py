@@ -71,9 +71,9 @@ class Stage3StrategicScorer:
 
         for c in candidate_list:
             # 1. Semantic Fit F
-            dense_sim = c.get('dense_similarity_score', 0.8)
+            dense_sim = c.get('normalized_dense_sim', 0.85)
             domain_score = c.get('domain_score', 0.8)
-            fit_f = round(0.6 * dense_sim + 0.4 * domain_score, 3)
+            fit_f = round(0.75 * dense_sim + 0.25 * domain_score, 3)
 
             # 2. Policy Compatibility P
             pol_p = round(c.get('policy_compatibility', 1.0), 3)

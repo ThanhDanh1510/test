@@ -102,11 +102,11 @@ class Stage2RiskGate:
             norm_domain_score = round(domain_score / max(1.0, total_weight), 3)
 
             # --- 4. PRE-STRATEGIC COMPOSITE SCORE ---
-            dense_sim = candidate.get('dense_similarity_score', 0.8)
+            dense_sim = candidate.get('normalized_dense_sim', 0.8)
             policy_compat = max(0.0, 1.0 - r_policy)
             
             # Initial screening score for Top 20 filtering
-            screening_score = (0.50 * dense_sim) + (0.25 * norm_domain_score) + (0.25 * policy_compat)
+            screening_score = (0.70 * dense_sim) + (0.15 * norm_domain_score) + (0.15 * policy_compat)
 
             cand_copy = dict(candidate)
             cand_copy['domain_score'] = norm_domain_score
