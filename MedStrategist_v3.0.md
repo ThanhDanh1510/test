@@ -9,6 +9,9 @@
 
 ## 1. 📌 Bối Cảnh & 4 Thách Thức Y Khoa Cốt Lõi
 
+**Literature grounding:** Biomedical publication-venue recommendation has been studied with systems such as Pubmender, while SimCPSR explicitly incorporates title, abstract, keywords, and journal aims/scope. These works motivate the semantic-retrieval backbone, but do not by themselves resolve policy risk or multi-objective author-specific decision making. [1,2]
+
+
 1. **Không gian nhãn lớn & chuyên biệt (1,406 Tạp chí PubMed/SCImago)**: Yêu cầu bộ truy vấn ứng viên siêu tốc (< 15ms) có độ phủ lớn (Recall@50 > 95%).
 2. **Rủi ro Bị Từ chối Sơ khảo (Desk Reject)**: Các tạp chí có chính sách cấm ngặt nghèo trong `Aims & Scope` (ví dụ: Tạp chí lâm sàng cấm *Case Report*, cấm nghiên cứu *Cell-Line thuần*).
 3. **Nguy cơ Tạp chí Săn mồi (Predatory / Delisted Journals)**: Cần chốt chặn an toàn (DOAJ, PubMed Active Index) bảo vệ tác giả.
@@ -89,11 +92,15 @@
 - **Cơ chế**: Dùng **Bio-Pattern Fast-Pass Engine** (bộ phân tích cú pháp thực thể y sinh regex/NER tối ưu), chạy trên CPU chỉ mất **2–5 ms**.
 
 #### 📜 STAGE 0.5: Journal Policy Constraint Encoder (Mã Hóa Ràng Buộc Chính Sách - Offline)
+
+> **Research-positioning note:** This stage is not claimed as a completely new retrieval primitive; its intended contribution is to make journal policies explicit, machine-checkable constraints inside the recommendation objective. Prior venue recommenders already use journal aims/scope as relevance information. [2]
 - **Mục đích**: Bóc tách toàn bộ đoạn văn `Aims & Scope` dài dòng của **1,406 tạp chí** thành các ràng buộc logic máy kiểm tra được và lưu cache tĩnh.
 - **Đầu ra**: Từ điển chính sách cho từng tạp chí gồm: `article_types` (loại bài được nhận), `excluded_types` (loại bài bị cấm: *"No case reports"*, *"No pure cell-line studies"*), `evidence_spans` (trích dẫn nguyên văn câu chữ làm bằng chứng).
 - **Cơ chế**: Pre-computed Offline một lần, tra cứu thời gian thực với độ trễ **0ms**.
 
 #### ⚡ STAGE 1: BioBERT SimCPSR Dual-Stream Dense Retrieval (Truy Vấn Ứng Viên - < 15ms)
+
+BioBERT is a standard biomedical-language backbone, and SimCPSR is a direct prior work on paper-submission recommendation using title, abstract, keywords, and journal aims/scope. [2,10]
 - **Mục đích**: Quét siêu tốc toàn bộ không gian **1,406 tạp chí** trên GPU để chọn ra **Top 50 tạp chí tiềm năng nhất** với độ phủ Recall@50 cao nhất.
 - **Đột phá (Dual-Stream Query Fusion)**:
   - *Luồng 1 (Full Stream)*: Mã hóa toàn bộ chuỗi `"Title: ... Abstract: ... Keywords: ..."`.
@@ -117,6 +124,8 @@
   - Khi 2 tạp chí có điểm tương đồng suýt soát bám sát nhau (near-ties), AMAR tự động kích hoạt bộ cộng hưởng từ khóa thực thể y sinh (**Term Resonance & Category Jaccard**) giữa bài báo và danh mục tạp chí để phân định chính xác vị trí **Top 1** (giúp Top-1 Acc tăng vọt lên **61.00%** và NDCG đạt **0.7325**).
 
 #### 🧭 STAGE 5: Multi-Objective Pareto Frontier Recommender (Không Gian Lựa Chọn Pareto - < 2ms)
+
+Multi-objective recommendation is an established research direction; the novelty here should therefore be framed as adapting Pareto decision making to journal-submission constraints and author preferences, not as inventing Pareto recommendation itself. [5]
 - **Mục đích**: Không áp đặt 1 thứ hạng cứng nhắc duy nhất; hệ thống tìm ra **đường biên tối ưu Pareto** giúp tác giả dễ dàng ra quyết định đánh đổi chiến lược.
 - **Nguyên lý Pareto Dominance**: Loại bỏ các tạp chí bị thống trị ở mọi chiều ($Fit, Policy, Quality, Safety$), giữ lại các tạp chí trên đường biên Pareto.
 - **Gán nhãn Decision Profiles**:
@@ -125,14 +134,19 @@
   - 🛡️ **"Safest Scope Target"**: Dành cho tác giả muốn tỷ lệ nhận bài cao nhất và an toàn phạm vi tuyệt đối.
 
 #### 📐 STAGE 6: Uncertainty Quantification & 90% Conformal Set (Độ Bất Định & Tập Tin Cậy - < 5ms)
+
+Conformal prediction has already been applied to recommender systems, including recommendation confidence sets. The contribution here should be a calibrated journal-selection set under the specific submission decision problem. [6]
 - **Mục đích**: Trả lời câu hỏi: *"Mô hình AI tự tin đến mức nào về khuyến nghị này?"* và đưa ra nhóm tạp chí có bảo đảm toán học.
 - **Cơ chế**:
   1. *Bootstrap Ensemble Perturbations*: Đo độ lệch chuẩn bất định $U_{\text{model}} = \text{Std}(U)$. Tự động bật cờ cảnh báo `needs_review: true` khi bài báo thuộc dạng liên ngành khó phân định ($U_{\text{model}} > 0.05$).
-  2. *90% Conformal Prediction Set*: Tính tích lũy xác suất phân phối Softmax cho đến khi đạt đúng **ngưỡng bao phủ 90%**:
-     $$C_{0.90}(x) = \{ j \mid \sum \text{Softmax}(U) \ge 0.90 \}$$
+  2. *90% Conformal Prediction Set*: Xây dựng **nonconformity score** trên calibration split, chọn quantile $q_{1-\alpha}$ và tạo tập $C_{1-\alpha}(x)$ theo quy trình conformal chuẩn. Coverage 90% chỉ được claim sau khi calibration và coverage evaluation được thực nghiệm trên test set độc lập. [6]
+
+> **Implementation note:** Cách cộng dồn Softmax scores không tự thân tạo ra conformal guarantee.
 
 #### 💬 STAGE 7: Evidence-Grounded Transparent Explanation (Giải Thích Dựa Trên Bằng Chứng - < 10ms)
-- **Mục đích**: Cung cấp báo cáo giải thích minh bạch cho Bác sĩ / Tác giả và **ngăn ngừa 100% hiện tượng ảo giác (hallucination) của AI**.
+
+Explainable journal recommendation is already an established line of work, and faithfulness is distinct from plausibility. Therefore, this stage should be evaluated for evidence support and faithfulness rather than claimed to eliminate hallucination by construction. [7-9]
+- **Mục đích**: Cung cấp báo cáo giải thích minh bạch cho Bác sĩ / Tác giả và **giảm nguy cơ unsupported claims bằng evidence grounding**.
 - **Cơ chế 3 lớp bằng chứng có cấu trúc (3-Fold Evidence Structure)**:
   1. *Positive Evidence*: Nêu rõ sự trùng khớp giữa PICO bài báo và mục tiêu chuyên ngành của tạp chí.
   2. *Negative / Friction Evidence*: Cảnh báo nếu tạp chí có điều kiện ngặt nghèo hoặc phân hạng hơi lệch kỳ vọng.
@@ -177,9 +191,11 @@ U(x, j \mid \theta) = \lambda_f F(x,j) + \lambda_p P(x,j) + \lambda_q Q(j) + \la
 ## 4. 🌟 5 Đột Phá Khoa Học Lớn Nhất Của Đề Tài (Key Novelties)
 
 ### 🌟 NOVELTY 1: Policy-Aware Risk Modeling ($R_{\text{policy}}$)
+
+> **Positioning against prior work:** Poincaré explicitly reframes publication-venue recommendation as treatment-effect estimation to optimize potential impact. This shows that venue recommendation can be formulated as a decision problem rather than pure semantic matching. Our setting instead focuses on policy-constrained strategic utility and uncertainty-aware choice, and should not claim causal effects without the required outcome data. [3]
 > **Mô hình hóa Rủi ro Chính sách Xuất bản & Ngăn ngừa Từ chối Sơ khảo (Desk Reject)**
 
-- **Hạn chế của các nghiên cứu trước**: Các hệ thống truyền thống chỉ thuần túy đo độ tương đồng ngữ nghĩa (Cosine similarity TF-IDF/BERT). Nếu bài báo là *Case Report* nhưng có từ vựng giống một bài thử nghiệm trên *Lancet Oncology*, hệ thống cũ sẽ gợi ý *Lancet Oncology* $\rightarrow$ Bài báo bị Tổng biên tập **từ chối sơ khảo (Desk Reject) ngay trong 24 giờ** vì tạp chí này cấm 100% Case Report.
+- **Hạn chế của các nghiên cứu trước**: Các hệ thống truyền thống chỉ thuần túy đo độ tương đồng ngữ nghĩa (Cosine similarity TF-IDF/BERT). Ví dụ minh họa: nếu một *Case Report* có từ vựng rất giống một journal chuyên clinical trials nhưng journal có policy loại case reports, semantic matching có thể đưa journal đó lên cao dù policy conflict tồn tại.
 - **Đột phá của MedStrategist**:
   - Xây dựng **Stage 0.5 (Policy Constraint Encoder)** bóc tách đoạn văn bản tự do trong `Aims & Scope` thành các ràng buộc logic máy đọc được (`case_report_excluded`, `cell_line_only_excluded`...).
   - Thiết lập công thức toán học tính điểm phạt rủi ro xung đột chính sách:
@@ -187,14 +203,14 @@ U(x, j \mid \theta) = \lambda_f F(x,j) + \lambda_p P(x,j) + \lambda_q Q(j) + \la
     R_{\text{policy}}(x, j) = \sum_{k} w_k \cdot c_k(x, j) \in [0, 1]
     \]
   - Tự động phân loại ứng viên vào 3 nhóm rủi ro: `ALLOW` ($R < 0.25$), `AMBIGUOUS` ($0.25 \le R < 0.65$), `CONFLICT` ($R \ge 0.65$).
-- **Ý nghĩa thực tế**: Bảo vệ tác giả, **tiết kiệm từ 3 đến 6 tháng chờ đợi vô ích** do bị từ chối sơ khảo vì lý do phạm quy chính sách.
+- **Ý nghĩa thực tế**: Giảm nguy cơ lựa chọn venue không phù hợp với chính sách và giúp tác giả phát hiện sớm các xung đột scope/article-type. **Không nên claim một mức tiết kiệm thời gian cố định nếu chưa có empirical evidence trong benchmark.**
 
 ---
 
 ### 🌟 NOVELTY 2: Multi-Objective Pareto Decision Frontier
 > **Không Gian Ra Quyết Định Đa Mục Tiêu Tối Ưu Pareto & Hồ Sơ Chiến Lược**
 
-- **Hạn chế của các nghiên cứu trước**: Ép buộc một bảng xếp hạng tuyến tính duy nhất (Top 1, Top 2...) bằng cách gộp điểm thô, không tính đến sự đánh đổi (Trade-off) theo mục tiêu riêng của từng tác giả (ví dụ: Nghiên cứu sinh cần tốt nghiệp thì ưu tiên an toàn, Giáo sư làm đề tài quốc gia thì ưu tiên tạp chí Q1/SJR cao).
+- **Literature context**: Multi-objective recommender research shows that optimizing a single relevance objective is often insufficient in real applications. Our setting specializes this idea to journal submission, where semantic fit, policy compatibility, quality, integrity, risk, and author preferences may conflict. [5]
 - **Đột phá của MedStrategist**:
   - Đưa lý thuyết **Tối ưu hóa Đa mục tiêu Pareto (Pareto Dominance)** vào bài toán gợi ý tạp chí trên không gian vector 6 chiều $V(x,j) = [Fit, Policy, Quality, Integrity, Pref, -Risk]$.
   - Tạp chí $A$ *thống trị* Tạp chí $B$ nếu $A$ không thua $B$ ở bất kỳ chiều nào và vượt trội hơn $B$ ở ít nhất 1 chiều. Hệ thống lọc sạch các tạp chí bị thống trị và giữ lại đường biên Pareto.
@@ -206,16 +222,13 @@ U(x, j \mid \theta) = \lambda_f F(x,j) + \lambda_p P(x,j) + \lambda_q Q(j) + \la
 
 ---
 
-### 🌟 NOVELTY 3: 90% Conformal Prediction Confidence Set
-> **Định Lượng Độ Bất Định & Tập Khuyến Nghị Tin Cậy Có Bảo Đảm Toán Học 90%**
+### 🌟 NOVELTY 3: Calibrated Conformal Journal Recommendation Set
+> **Định lượng độ bất định và xây dựng tập khuyến nghị có coverage được calibration**
 
-- **Hạn chế của các nghiên cứu trước**: Các mô hình Deep Learning thường gặp lỗi **"Tự tin thái quá" (Overconfidence)** — đưa ra 1 tạp chí với xác suất 0.90 nhưng thực chất là sai, và hoàn toàn không thể biết khi nào AI đang bị phân vân (nhất là với các bài báo liên ngành như Tin sinh học lai Tim mạch).
+- **Literature context**: Recommendation systems can benefit from calibrated confidence rather than only point recommendations; conformal recommender systems explicitly study validity and efficiency of recommendation confidence. [6]
 - **Đột phá của MedStrategist**:
-  - Tích hợp kỹ thuật **Bootstrap Ensemble Perturbations** để đo độ lệch chuẩn độ bất định của mô hình $U_{\text{model}} = \text{Std}(\text{Bootstrap})$. Khi $U_{\text{model}} > 0.05$, hệ thống tự động bật cờ cảnh báo `needs_review: true` (bài báo liên ngành khó).
-  - Ứng dụng lý thuyết **Conformal Prediction** để tạo ra một tập hợp các tạp chí tin cậy có **bảo đảm bao phủ xác suất 90% về mặt toán học**:
-    \[
-    C_{0.90}(x) = \left\{ j \mid \sum_{k=1}^m \text{Softmax}(U(x, j_{(k)})) \ge 0.90 \right\}
-    \]
+  - Tích hợp **Bootstrap Ensemble Perturbations** để đo độ bất định của mô hình $U_{\text{model}} = \text{Std}(U_{\text{bootstrap}})$. Ngưỡng `needs_review` được **calibrate trên validation set** thay vì giả định ngưỡng 0.05 là phổ quát.
+  - Ứng dụng **Conformal Prediction** theo quy trình calibration chuẩn: nonconformity score → calibration quantile → prediction set. Coverage 90% chỉ được báo cáo nếu được xác nhận trên test set độc lập dưới các giả định exchangeability phù hợp. [6]
 - **Ý nghĩa thực tế**: Cung cấp bằng chứng định lượng rủi ro vững chắc, giúp bác sĩ biết chính xác độ tin cậy của AI và nhận diện ngay những bài báo phức tạp cần xem xét kỹ.
 
 ---
@@ -244,7 +257,7 @@ U(x, j \mid \theta) = \lambda_f F(x,j) + \lambda_p P(x,j) + \lambda_q Q(j) + \la
       2. **Negative / Friction Evidence**: Cảnh báo các điều kiện ngặt nghèo (ví dụ tạp chí yêu cầu phải có dữ liệu mở).
       3. **Policy Evidence Spans**: Trích dẫn **nguyên văn câu chữ** từ `Aims & Scope` của tạp chí làm bằng chứng không thể chối cãi.
     - *Chặng 2 (Constrained Verbalization)*: Bộ sinh lời giải thích bị ràng buộc 100% chỉ được diễn giải dựa trên các bằng chứng đã được kiểm chứng ở Chặng 1, tuyệt đối không được tự bịa thông tin.
-- **Ý nghĩa thực tế**: Xây dựng niềm tin chuyên môn tuyệt đối với Bác sĩ, chuyên gia y tế và Hội đồng khoa học thông qua sự minh bạch và có thể kiểm chứng được.
+- **Ý nghĩa thực tế**: Tăng khả năng kiểm chứng của recommendation bằng evidence spans và các phép đo faithfulness; mức độ tin cậy phải được xác nhận bằng thực nghiệm với annotators/benchmark, không giả định là tuyệt đối.
 
 ---
 
@@ -252,11 +265,11 @@ U(x, j \mid \theta) = \lambda_f F(x,j) + \lambda_p P(x,j) + \lambda_q Q(j) + \la
 
 | STT | Tên Đột Phá (Novelty) | Khác Biệt Cốt Lõi So Với Nghiên Cứu Trước | Giá Trị Thực Tiễn Mang Lại |
 |:---:|---|---|---|
-| **1** | **Policy-Aware Risk ($R_{\text{policy}}$)** | Bóc tách logic `Aims & Scope`, tính điểm phạt rủi ro. | Ngăn chặn 100% rủi ro bị từ chối sơ khảo (Desk Reject). |
+| **1** | **Policy-Aware Risk ($R_{\text{policy}}$)** | Bóc tách logic `Aims & Scope`, tính điểm phạt rủi ro. | Giảm nguy cơ xung đột policy/desk-reject; hiệu quả phải được đo bằng policy-risk benchmark. |
 | **2** | **Multi-Objective Pareto Frontier** | Tối ưu hóa đa mục tiêu, gán Decision Profiles thay vì 1 list cứng. | Giúp tác giả chủ động lựa chọn đánh đổi (Uy tín vs An toàn). |
-| **3** | **90% Conformal Confidence Set** | Định lượng độ bất định & cam kết độ bao phủ 90% toán học. | Cung cấp bảo đảm toán học vững chắc cho bài báo phức tạp. |
+| **3** | **Calibrated Conformal Journal Set** | Định lượng độ bất định & tạo recommendation set sau calibration. | Cung cấp coverage guarantee chỉ khi calibration/evaluation thỏa điều kiện conformal. |
 | **4** | **Dual-Stream & AMAR Disambiguation** | Tách luồng Tiêu đề + Toàn văn & phân định thực thể sát nút. | Đẩy Top-1 Acc lên 61%, Top-5 Acc lên 84%, NDCG lên 0.7325. |
-| **5** | **Evidence-Grounded Explanations** | Ràng buộc giải thích 3 lớp bằng chứng có cấu trúc theo PICO. | Ngăn ngừa 100% ảo giác (hallucination) của AI y tế. |
+| **5** | **Evidence-Grounded Explanations** | Ràng buộc giải thích bằng evidence spans và đo faithfulness. | Giảm unsupported claims; hiệu quả phải được xác nhận bằng đánh giá faithfulness. |
 
 ---
 
@@ -268,17 +281,20 @@ U(x, j \mid \theta) = \lambda_f F(x,j) + \lambda_p P(x,j) + \lambda_q Q(j) + \la
 | Chỉ số Đánh Giá (Metric) | Kết quả Đo Đạc Mới Nhất | Ý nghĩa Thực Nghiệm & Đóng Góp |
 |---|:---:|---|
 | **Stage 1 Recall@50** | **97.00%** | 97/100 bài báo có tạp chí gốc nằm trong Top 50 ứng viên. |
-| **Top-1 Accuracy** | **61.00%** | 61/100 bài báo đoán chuẩn xác 100% tên tạp chí ở ngay vị trí #1. |
-| **Top-3 Accuracy** | **76.00%** | Khả năng định vị chính xác trong Top 3 lựa chọn đầu. |
-| **Top-5 Accuracy** | **84.00%** | 84/100 bài báo trúng đích ngay trong Top 5 đề xuất. |
-| **Top-10 Accuracy** | **84.00%** | Độ phủ chuẩn xác cao của toàn bộ nhóm đề xuất. |
-| **NDCG@5 / NDCG@10** | **0.7325** | Chất lượng thứ bậc xếp hạng vượt trội (tăng vọt từ 0.66). |
-| **Mean Uncertainty** | **0.0253** | Độ tin cậy cao, độ bất định của mô hình cực kỳ thấp. |
-| **Thời gian Thực thi (Latency P50)** | **44.53 ms / bài** | Siêu nhanh, sẵn sàng 100% cho Web/API Production thời gian thực. |
+| **Top-1 Accuracy** | **61.00% (target)** | 61/100 bài báo đoán chuẩn xác 100% tên tạp chí ở ngay vị trí #1. |
+| **Top-3 Accuracy** | **76.00% (target)** | Khả năng định vị chính xác trong Top 3 lựa chọn đầu. |
+| **Top-5 Accuracy** | **84.00% (target)** | 84/100 bài báo trúng đích ngay trong Top 5 đề xuất. |
+| **Top-10 Accuracy** | **84.00% (target)** | Độ phủ chuẩn xác cao của toàn bộ nhóm đề xuất. |
+| **NDCG@5 / NDCG@10** | **0.7325 (target)** | Chất lượng thứ bậc xếp hạng vượt trội (tăng vọt từ 0.66). |
+| **Mean Uncertainty** | **0.0253 (target)** | Độ tin cậy cao, độ bất định của mô hình cực kỳ thấp. |
+| **Thời gian Thực thi (Latency P50)** | **44.53 ms / bài (target)** | Siêu nhanh, sẵn sàng 100% cho Web/API Production thời gian thực. |
 
 ---
 
 ## 6. 💻 Minh Họa Cấu Trúc Đầu Ra (Output Schema Demo)
+
+> **Important:** Các con số accuracy/latency trong tài liệu này phải được đánh dấu là *target/expected* cho tới khi được chạy và ghi nhận trên test set độc lập. Không nên trình bày target như kết quả thực nghiệm.
+
 
 ```json
 {
@@ -309,3 +325,51 @@ U(x, j \mid \theta) = \lambda_f F(x,j) + \lambda_p P(x,j) + \lambda_q Q(j) + \la
   }
 }
 ```
+
+---
+
+## 7. 📚 References & Citation Map
+
+The following references support the literature positioning of the system. Citation numbers in the document correspond to this list.
+
+### Core journal / venue recommendation
+
+**[1]** Feng, X., Zhang, H., Ren, Y., Shang, P., Zhu, Y., Liang, Y., Guan, R., & Xu, D. (2019). *The Deep Learning–Based Recommender System “Pubmender” for Choosing a Biomedical Publication Venue: Development and Validation Study*. **Journal of Medical Internet Research, 21**(5), e12957. https://doi.org/10.2196/12957
+
+**[2]** Le, D. H., Doan, T. T., Huynh, S. T., & Nguyen, B. T. (2022). *SimCPSR: Simple Contrastive Learning for Paper Submission Recommendation System*. arXiv:2205.05940. https://arxiv.org/abs/2205.05940
+
+**[3]** Sato, R., Yamada, M., & Kashima, H. (2022). *Poincare: Recommending Publication Venues via Treatment Effect Estimation*. **Journal of Informetrics, 16**(2), 101283. https://doi.org/10.1016/j.joi.2022.101283
+
+**[4]** Gündoğan, E., Kaya, M., & Daud, A. (2023). *Deep learning for journal recommendation system of research papers*. **Scientometrics, 128**, 461–481. https://doi.org/10.1007/s11192-022-04535-y
+
+### Multi-objective recommendation
+
+**[5]** Jannach, D., & Abdollahpouri, H. (2023). *A survey on multi-objective recommender systems*. **Frontiers in Big Data, 6**, 1157899. https://doi.org/10.3389/fdata.2023.1157899
+
+### Uncertainty / conformal recommendation
+
+**[6]** *Conformal recommender system*. (2017). **Information Sciences, 405**, 157–174. https://doi.org/10.1016/j.ins.2017.04.005
+
+### Explainability and faithfulness
+
+**[7]** Lyu, Q., Apidianaki, M., & Callison-Burch, C. (2024). *Towards Faithful Model Explanation in NLP: A Survey*. **Computational Linguistics, 50**(2), 657–723. https://doi.org/10.1162/coli_a_00511
+
+**[8]** Xu, Z., Zeng, H., Tan, J., Fu, Z., Zhang, Y., & Ai, Q. (2023). *A Reusable Model-agnostic Framework for Faithfully Explainable Recommendation and System Scrutability*. **ACM Transactions on Information Systems, 42**(1), Article 29. https://doi.org/10.1145/3605357
+
+**[9]** de Campos, L. M., Fernández-Luna, J. M., & Huete, J. F. (2024). *An explainable content-based approach for recommender systems: a case study in journal recommendation for paper submission*. **User Modeling and User-Adapted Interaction, 34**, 1431–1465. https://doi.org/10.1007/s11257-024-09400-6
+
+### Biomedical language representation
+
+**[10]** Lee, J., Yoon, W., Kim, S., Kim, D., Kim, S., So, C. H., & Kang, J. (2020). *BioBERT: a pre-trained biomedical language representation model for biomedical text mining*. **Bioinformatics, 36**(4), 1234–1240. https://doi.org/10.1093/bioinformatics/btz682
+
+### Citation-positioning rule for the paper
+
+- [1,2,4,9] establish that journal/publication-venue recommendation and explainable journal recommendation already exist.
+- [3] establishes the prior counterfactual/treatment-effect formulation for venue selection.
+- [5] establishes multi-objective recommendation as an established research direction.
+- [6] establishes conformal recommendation and the validity/efficiency perspective for recommendation confidence.
+- [7,8] establish that explanation **faithfulness** is distinct from merely producing plausible text.
+- [10] supports the use of BioBERT as a biomedical NLP backbone.
+
+**Recommended novelty framing:** the novelty should be stated at the level of **policy-constrained strategic journal selection under competing objectives and calibrated uncertainty**, not as the invention of journal recommendation, Pareto optimization, conformal recommendation, or faithful explanation individually.
+
