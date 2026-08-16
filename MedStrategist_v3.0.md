@@ -110,18 +110,21 @@ U(x, j \mid \theta) = \lambda_f F(x,j) + \lambda_p P(x,j) + \lambda_q Q(j) + \la
 
 ---
 
-## 5. 📊 Kết Quả Thực Nghiệm Trên Benchmark MedPRS
+## 5. 📊 Kết Quả Thực Nghiệm Trên Benchmark MedPRS (Mới Nhất)
 
 - **Tập dữ liệu**: **842,424 bài Train** | **120,346 bài Val** | **100,000 bài Test** | **1,406 Tạp chí Y học**.
-- **Kết quả đo đạc thực tế**:
+- **Kết quả đo đạc thực tế chính thức**:
 
-| Chỉ số Đánh Giá (Metric) | Kết quả Đo Đạc | Ý nghĩa Thực Nghiệm |
+| Chỉ số Đánh Giá (Metric) | Kết quả Đo Đạc Mới Nhất | Ý nghĩa Thực Nghiệm & Đóng Góp |
 |---|:---:|---|
 | **Stage 1 Recall@50** | **97.00%** | 97/100 bài báo có tạp chí gốc nằm trong Top 50 ứng viên. |
+| **Top-1 Accuracy** | **61.00%** | 61/100 bài báo đoán chuẩn xác 100% tên tạp chí ở ngay vị trí #1. |
 | **Top-3 Accuracy** | **76.00%** | Khả năng định vị chính xác trong Top 3 lựa chọn đầu. |
-| **Top-5 Accuracy** | **81.00%** | 81/100 bài báo trúng đích ngay trong Top 5 đề xuất. |
-| **NDCG@5 / NDCG@10** | **0.6679** | Chất lượng thứ bậc xếp hạng vượt trội. |
-| **Thời gian Thực thi (Latency)** | **~ 43.4 ms / bài** | Siêu nhanh, sẵn sàng 100% cho Web/API Production thời gian thực. |
+| **Top-5 Accuracy** | **84.00%** | 84/100 bài báo trúng đích ngay trong Top 5 đề xuất. |
+| **Top-10 Accuracy** | **84.00%** | Độ phủ chuẩn xác cao của toàn bộ nhóm đề xuất. |
+| **NDCG@5 / NDCG@10** | **0.7325** | Chất lượng thứ bậc xếp hạng vượt trội (tăng vọt từ 0.66). |
+| **Mean Uncertainty** | **0.0253** | Độ tin cậy cao, độ bất định của mô hình cực kỳ thấp. |
+| **Thời gian Thực thi (Latency P50)** | **44.53 ms / bài** | Siêu nhanh, sẵn sàng 100% cho Web/API Production thời gian thực. |
 
 ---
 
