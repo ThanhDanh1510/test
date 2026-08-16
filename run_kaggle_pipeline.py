@@ -12,14 +12,14 @@ from stage6_uncertainty import Stage6UncertaintyLayer
 from stage7_evidence_explainer import Stage7EvidenceExplainer
 from evaluator import evaluate_pipeline
 
-class DTARv3Pipeline:
+class MedStrategistPipeline:
     """
-    DTAR-Submission Strategist v3.0 Master Pipeline:
-    Risk-Aware, Counterfactual, Pareto and Uncertainty-Calibrated Medical Journal Recommendation
+    MedStrategist v3.0 Master Pipeline:
+    Risk-Aware, Counterfactual, Pareto and Uncertainty-Calibrated Medical Journal Submission Strategist
     """
     def __init__(self, data_dir="./", checkpoint_path=None):
         print("=======================================================")
-        print("INITIALIZING DTAR-SUBMISSION STRATEGIST v3.0 PIPELINE")
+        print("INITIALIZING MEDSTRATEGIST v3.0 PIPELINE")
         print(f"Data Directory: {data_dir}")
         print("=======================================================")
 
@@ -39,7 +39,7 @@ class DTARv3Pipeline:
         self.stage6 = Stage6UncertaintyLayer(coverage_target=0.90)
         self.stage7 = Stage7EvidenceExplainer()
 
-        print("✅ DTAR v3.0 Pipeline successfully loaded and ready for inference!\n")
+        print("✅ MedStrategist v3.0 Pipeline successfully loaded and ready for inference!\n")
 
     def _auto_find_checkpoint(self, data_dir):
         candidates = [
@@ -100,7 +100,7 @@ class DTARv3Pipeline:
             "recommendations": top5_recommendations,
             "confidence_set": conf_set,
             "system_notes": {
-                "pipeline_version": "DTAR-Submission Strategist v3.0",
+                "pipeline_version": "MedStrategist v3.0",
                 "total_candidates_evaluated": len(self.journal_df),
                 "retrieval_pool_size": len(stage1_top50),
                 "pareto_options_count": sum(1 for c in pareto_candidates if c.get('pareto_optimal', False))
@@ -112,11 +112,12 @@ class DTARv3Pipeline:
 
         return final_response
 
-# Aliases for backward compatibility
-DTARSlimPipeline = DTARv3Pipeline
+# Aliases for 100% backward compatibility
+DTARv3Pipeline = MedStrategistPipeline
+DTARSlimPipeline = MedStrategistPipeline
 
 def main():
-    pipeline = DTARv3Pipeline(data_dir="./")
+    pipeline = MedStrategistPipeline(data_dir="./")
     sample_paper = {
         "title": "A chemo mechanical constitutive model for muscle activation in bat wing skins.",
         "abstract": "Birds, bats and insects have evolved unique wing structures to achieve a wide range of flight capabilities...",

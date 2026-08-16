@@ -1,8 +1,8 @@
-# DTAR-Submission Strategist v3.0
+# MedStrategist v3.0
 
-## Risk-Aware, Counterfactual, Pareto and Uncertainty-Calibrated Medical Journal Recommendation
+## Risk-Aware, Counterfactual, Pareto and Uncertainty-Calibrated Medical Journal Submission Strategist
 
-> **Core idea:** Không còn chỉ trả lời *"Tạp chí nào giống bài này nhất?"*. Hệ thống trả lời *"Trong các tạp chí hợp lệ, tạp chí nào là lựa chọn chiến lược tốt nhất cho bài này dưới các mục tiêu và ràng buộc cụ thể?"*
+> **Core idea:** Không còn chỉ trả lời *"Tạp chí nào giống bài này nhất?"*. Hệ thống trả lời *"Trong các tạp chí hợp lệ, tạp chí nào là lựa chọn CHIẾN LƯỢC TỐT NHẤT cho bài này dưới các mục tiêu, ràng buộc chính sách và độ bất định cụ thể?"*
 
 ---
 

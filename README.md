@@ -1,8 +1,8 @@
-# DTAR-Submission Strategist v3.0
+# MedStrategist v3.0
 
-## Risk-Aware, Counterfactual, Pareto and Uncertainty-Calibrated Medical Journal Recommendation
+## Risk-Aware, Counterfactual, Pareto and Uncertainty-Calibrated Medical Journal Submission Strategist
 
-**DTAR v3.0** transforms medical journal recommendation from simple semantic matching into a **risk-aware, policy-constrained, and uncertainty-calibrated strategic decision support system** for biomedical researchers matching papers against 1,406 PubMed/SCImago indexed journals.
+**MedStrategist v3.0** transforms medical journal recommendation from simple semantic matching into a **risk-aware, policy-constrained, and uncertainty-calibrated strategic decision support system** for biomedical researchers matching papers against 1,406 PubMed/SCImago indexed journals.
 
 ---
 
@@ -24,16 +24,16 @@
 ├── dataset_loader.py               # Data loader for 1,406 PubMed journals & MedPRS paper splits
 ├── stage0_parser.py                # Stage 0: PICO, Study Type & Soft Signal Extractor
 ├── stage0_5_policy_encoder.py      # Stage 0.5: Journal Policy Constraint & Evidence Span Encoder
-├── stage1_retriever.py             # Stage 1: BioBERT SimCPSR Dense Retriever (Top-50 Recall@50 = 96%)
+├── stage1_retriever.py             # Stage 1: BioBERT SimCPSR Dense Retriever (Top-50 Recall@50 = 97%)
 ├── stage2_hybrid_gate.py           # Stage 2: Risk-Aware Policy Gate & Soft Domain Matcher
-├── stage3_strategic_scorer.py      # Stage 3 & 4: Strategic Utility Vector & Multi-Objective Scorer
+├── stage3_strategic_scorer.py      # Stage 3 & 4: Strategic Utility Vector & AMAR Scorer
 ├── stage5_pareto_recommender.py    # Stage 5: Multi-Objective Pareto Frontier Recommender
 ├── stage6_uncertainty.py           # Stage 6: Uncertainty Layer & 90% Conformal Confidence Set
 ├── stage7_evidence_explainer.py    # Stage 7: Evidence-Grounded Explanation Generator
 ├── evaluator.py                    # Multi-Metric Benchmark Evaluator (Recall, NDCG, Uncertainty, Latency)
-├── run_kaggle_pipeline.py          # Master End-to-End Orchestrator
+├── run_kaggle_pipeline.py          # Master End-to-End Orchestrator (MedStrategistPipeline)
 ├── train_simcprs.py                # Multi-GPU FP16 Continuous Trainer (Epoch 2 -> 10)
-├── DTAR_Submission_Strategist_v3.0.md # Master v3.0 System Architecture Specification
+├── MedStrategist_v3.0.md           # 🌟 Master v3.0 System Architecture Specification
 ├── journal_full_info.csv           # 1,406 PubMed journal metadata dataset (22 columns)
 └── README.md
 ```

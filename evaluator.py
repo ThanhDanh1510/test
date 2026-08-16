@@ -98,7 +98,7 @@ def evaluate_pipeline(pipeline, test_papers_df, top_k_list=[1, 3, 5, 10]):
         }
     }
 
-    print("\n---------------- EVALUATION RESULTS (DTAR v3.0) ----------------")
+    print("\n---------------- EVALUATION RESULTS (MedStrategist v3.0) ----------------")
     print(f"Evaluated Samples  : {report['samples_evaluated']}")
     print(f"Stage 1 Recall@50  : {report['stage1_recall_50'] * 100:.2f}%")
     for k_str, acc_val in report['accuracy'].items():
